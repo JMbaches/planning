@@ -3034,7 +3034,7 @@ ${sign}`,
       const proposedResult = await planWeek(binPool, depot, workday, days, poseDaysISO, true);
       // Afficher la modale de confirmation avec avant/après
       setDropProposal({ chantierObj, updated, binId, iso, bin, currentPlan: existingRes, proposedResult });
-    } catch(e) { setError(String(e)); }
+    } catch(e) { console.error('[dropOnDay] erreur:', e); setError(String(e)); }
     finally { setComputing(false); setProgress(''); }
   };
 
