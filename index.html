@@ -206,6 +206,7 @@ const parseISO = (iso) => { if (iso instanceof Date) return iso; const [y, m, d]
 const fmtDate = (iso) => iso ? parseISO(iso).toLocaleDateString('fr-FR', { weekday: 'short', day: '2-digit', month: 'short' }) : '—';
 const fmtDateLong = (iso) => iso ? parseISO(iso).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : '—';
 const getWeekStart = (date) => { const d = new Date(date); const day = d.getDay(); d.setDate(d.getDate() - day + (day === 0 ? -6 : 1)); d.setHours(0,0,0,0); return d; };
+const getISOWeek = (date) => { const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())); d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7)); const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1)); return Math.ceil((((d - yearStart) / 86400000) + 1) / 7); };
 const addDays = (date, n) => { const d = new Date(date); d.setDate(d.getDate() + n); return d; };
 // Produit 'YYYY-MM-DD' à partir des composantes LOCALES (pas UTC) — évite le recul d'un jour.
 const toISO = (d) => { const x = (d instanceof Date) ? d : new Date(d); const y = x.getFullYear(); const m = String(x.getMonth() + 1).padStart(2, '0'); const day = String(x.getDate()).padStart(2, '0'); return `${y}-${m}-${day}`; };
@@ -2226,7 +2227,7 @@ function FeuillesDeRoute({ chantiers, binomes, depot }) {
 }
 
 function PrintSheetWeek({ weekStart, weekData, onBack }) {
-  const weekLabel = `${weekStart.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long' })} – ${addDays(weekStart, 4).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })}`;
+  const weekLabel = `Semaine ${getISOWeek(weekStart)} · ${weekStart.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long' })} – ${addDays(weekStart, 4).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })}`;
   return (
     <div className="pt-10 fadein">
       <div className="no-print flex gap-3 mb-6">
@@ -2648,7 +2649,7 @@ function EmploiDuTemps({ chantiers, binomes, depot, workday, unavail, upsert, sh
   const weekKey = useMemo(() => toISO(weekStart), [weekStart]); // clé d'enregistrement = lundi ISO
 
   const days = useMemo(() => Array.from({ length: 6 }, (_, i) => addDays(weekStart, i)), [weekStart]);
-  const weekLabel = `${weekStart.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })} – ${addDays(weekStart, 5).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })}`;
+  const weekLabel = `S${getISOWeek(weekStart)} · ${weekStart.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })} – ${addDays(weekStart, 5).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })}`;
 
   // Un chantier est "figé" s'il a déjà une date planifiée sur une AUTRE semaine que celle affichée.
   // Par défaut, l'optimisation ne touche pas à ces chantiers (stabilité du planning).
@@ -3096,7 +3097,7 @@ ${sign}`,
           <div className="flex-1 min-w-0">
             <div className="font-medium text-sm" style={{ color: 'var(--teal-deep)' }}>Emploi du temps enregistré</div>
             <div className="text-xs" style={{ color: 'var(--ink-soft)' }}>
-              Semaine du {weekStart.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })} · sauvegardé le {new Date(savedAt).toLocaleDateString('fr-FR')} à {new Date(savedAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}. Il sera retrouvé tel quel à la réouverture.
+              S{getISOWeek(weekStart)} · Semaine du {weekStart.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })} · sauvegardé le {new Date(savedAt).toLocaleDateString('fr-FR')} à {new Date(savedAt).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}. Il sera retrouvé tel quel à la réouverture.
             </div>
           </div>
           <button onClick={clearSaved} className="text-xs flex items-center gap-1" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-faint)' }}>
