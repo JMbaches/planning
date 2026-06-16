@@ -978,10 +978,14 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, pinByDate 
       // Au-delà : nuit sur place — mieux vaut dormir sur place que rentrer à 20h.
       const proche = hasDepot && returnSiege > 0 && returnSiege < SIEGE_SEUIL_SEC;
       // Veille d'un jour fermé (férié ou fermeture JM Bâches) : on rentre forcément au siège
-      const nextISO = poseList[di + 1] || null;
-      const nextDayIsClosed = nextISO ? isClosedDay(nextISO, closures) : false;
+      // Vérifier si le jour CALENDAIRE suivant (pas forcément un jour de pose) est fermé
+      const todayDate = new Date(iso + 'T12:00:00');
+      const tomorrowDate = new Date(todayDate); tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+      const tomorrowISO = toISO(tomorrowDate);
+      const nextDayIsClosed = isClosedDay(tomorrowISO, closures);
       // Aussi : si le lendemain n'est pas dans la semaine, c'est le dernier jour → déjà géré par isLastPoseDay
-      const forceReturn = nextDayIsClosed && hasDepot && returnSiege > 0 && (endMin + returnSiege / 60 <= RETOUR_MAX);
+      // Veille de jour fermé : retour forcé même si on arrive tard (pas de RETOUR_MAX)
+      const forceReturn = nextDayIsClosed && hasDepot && returnSiege > 0;
       let rentre = forceReturn || (proche && (endMin + returnSiege / 60 <= RETOUR_MAX));
 
       if (rentre) {
