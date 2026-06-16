@@ -2837,6 +2837,16 @@ ${sign}`,
   const unassigned = useMemo(() => optimizable.filter(c => !c.scheduledBinome), [optimizable]);
   const allToPlan = optimizable;
   const hasAny = mode === 'auto' ? allToPlan.length > 0 : manualPools.some(p => p.pool.length);
+  // Tous les chantiers non casés cette semaine (union de tous les overflow, dédupliqués)
+  const allOverflow = useMemo(() => {
+    const seen = new Set();
+    const result = [];
+    Object.values(schedules).forEach(res => {
+      (res.overflow || []).forEach(c => { if (!seen.has(c.id)) { seen.add(c.id); result.push(c); } });
+    });
+    // Trier : d'abord ceux sans fenêtre ou dans la fenêtre, puis les _softWindow
+    return result.sort((a, b) => (a._softWindow ? 1 : 0) - (b._softWindow ? 1 : 0));
+  }, [schedules]);
 
   // Au changement de semaine (ou de mode), on repart à blanc PUIS on tente de recharger
   // l'emploi du temps enregistré pour cette semaine (affiché à l'identique).
@@ -3008,16 +3018,19 @@ ${sign}`,
       const depot = settings.depot || {};
       const workday = settings.workday || {};
       const unavail = settings.unavailabilities || [];
-      // Pool de ce binôme : chantiers déjà assignés + le nouveau
-      const updatedList = chantiers.map(c => c.id === chantierObj.id ? updated : c);
-      const binPool = updatedList.filter(c =>
-        c.scheduledBinome === binId &&
-        c.status !== 'valide' && c.status !== 'fait' &&
-        days.some(d => toISO(d) === (c.scheduledDate || ''))
-      );
+      // Pool = chantiers déjà dans le schedule de ce binôme (depuis assignments) + le nouveau
+      const existingRes = schedules[binId];
+      const existingPool = existingRes
+        ? existingRes.assignments.map(a => chantiers.find(c => c.id === a.id)).filter(Boolean)
+        : [];
+      // Ajouter le nouveau chantier si pas déjà dans le pool
+      const alreadyIn = existingPool.some(c => c.id === updated.id);
+      const binPool = alreadyIn
+        ? existingPool.map(c => c.id === updated.id ? updated : c)
+        : [...existingPool, updated];
       // Jours verrouillés = jours avec chantiers validés
       const lockedDays = new Set(
-        updatedList.filter(c => c.scheduledBinome === binId && c.status === 'valide' && c.scheduledDate)
+        chantiers.filter(c => c.scheduledBinome === binId && c.status === 'valide' && c.scheduledDate)
           .map(c => c.scheduledDate)
       );
       const poseDaysISO = days.slice(0, 4).map(d => toISO(d))
@@ -3414,44 +3427,31 @@ ${sign}`,
                     </div>
                   </div>
                 )}
-                {res && res.overflow.length > 0 && (() => {
-                  const owIds = new Set((res.outOfWindow || []).map(c => c.id));
-                  const fenetre = res.overflow.filter(c => owIds.has(c.id));
-                  const autres = res.overflow.filter(c => !owIds.has(c.id));
-                  return (
-                    <div className="mt-3 p-3 rounded text-sm" style={{ background: '#FBF1D9', color: '#8B5E00' }}>
-                      {autres.length > 0 && (
-                        <div>
-                          <strong>Ne tient pas dans la semaine</strong> ({autres.length}) — glisse un chantier sur un jour pour le forcer :
-                          <div className="flex flex-wrap gap-2 mt-2">
-                            {autres.map(c => (
-                              <div key={c.id}
-                                draggable
-                                onDragStart={e => { e.dataTransfer.setData('chantier', JSON.stringify(c)); setDragChantier({ id: c.id, binId: bin.id }); }}
-                                onDragEnd={() => { setDragChantier(null); setDragOverCol(null); }}
-                                style={{ cursor: 'grab', background: 'var(--amber)', color: '#7a4000', borderRadius: 6, padding: '3px 8px', fontSize: 12, fontWeight: 600, userSelect: 'none', opacity: dragChantier?.id === c.id ? 0.5 : 1 }}
-                                title={`${c.type} · ${c.postalCode} ${c.city} · ${c.estimatedDuration}h`}
-                              >
-                                <span style={{ fontWeight: 700 }}>{c.clientName}</span>
-                                <span style={{ fontWeight: 400, opacity: 0.8, marginLeft: 5 }}>{c.postalCode} {c.city}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {fenetre.length > 0 && (
-                        <div className={autres.length ? 'mt-2' : ''}>
-                          <strong>⚠ Fenêtre client hors de cette semaine</strong> ({fenetre.length}) : {fenetre.map(c => {
-                            const w = c.notBefore && c.notAfter ? `entre ${fmtDate(c.notBefore)} et ${fmtDate(c.notAfter)}`
-                              : c.notBefore ? `pas avant ${fmtDate(c.notBefore)}`
-                              : c.notAfter ? `pas après ${fmtDate(c.notAfter)}` : '';
-                            return `${c.clientName} (${w})`;
-                          }).join(', ')}. Place-les sur une semaine compatible.
-                        </div>
-                      )}
+                {allOverflow.length > 0 && (
+                  <div className="mt-3 p-3 rounded text-sm" style={{ background: '#F3F4F6', border: '1px dashed var(--border)' }}>
+                    <div className="font-semibold mb-2" style={{ color: 'var(--ink-soft)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      Chantiers non casés — glisse sur un jour pour forcer ({allOverflow.length})
                     </div>
-                  );
-                })()}
+                    <div className="flex flex-wrap gap-2">
+                      {allOverflow.map(c => {
+                        const isDragging = dragChantier?.id === c.id;
+                        const isLate = c._softWindow;
+                        return (
+                          <div key={c.id}
+                            draggable
+                            onDragStart={e => { e.dataTransfer.setData('chantier', JSON.stringify(c)); setDragChantier({ id: c.id, binId: bin.id }); }}
+                            onDragEnd={() => { setDragChantier(null); setDragOverCol(null); }}
+                            style={{ cursor: 'grab', background: isLate ? '#FEE2E2' : 'var(--amber)', color: isLate ? '#991B1B' : '#7a4000', borderRadius: 6, padding: '4px 10px', fontSize: 12, userSelect: 'none', opacity: isDragging ? 0.4 : 1, display: 'flex', flexDirection: 'column', gap: 1 }}
+                            title={`${c.type} · ${c.estimatedDuration}h${isLate ? ' · deadline dépassée' : ''}`}
+                          >
+                            <span style={{ fontWeight: 700 }}>{c.clientName}</span>
+                            <span style={{ fontWeight: 400, fontSize: 11 }}>{c.postalCode} {c.city} · {c.estimatedDuration}h{isLate ? ' ⚠' : ''}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </section>
             );
           })}
@@ -4268,6 +4268,7 @@ function Parametres({ binomes, setBinomes, poseTypes, setPoseTypes, depot, setDe
                   <input type="tel" value={b.phone || ''} placeholder="Téléphone (SMS)" onChange={e => { const c = [...binomes]; c[idx] = { ...c[idx], phone: e.target.value }; setBinomes(c); }} />
                   <input type="email" value={b.email || ''} placeholder="Email" onChange={e => { const c = [...binomes]; c[idx] = { ...c[idx], email: e.target.value }; setBinomes(c); }} />
                 </div>
+
               </div>
             ))}
             <button onClick={() => showToast('Binômes sauvegardés')} className="btn-primary"><I.save size={14} /> Enregistrer</button>
