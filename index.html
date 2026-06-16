@@ -813,9 +813,19 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, pinByDate 
       // b) chantiers du jour : on place tout, PUIS on tronque à 18h après insertion du déjeuner.
       //    La 1re pose qui dépasse 18h est coupée à 18h (reste demain) ; les suivantes partent demain.
       for (let k = 0; k < chunk.stops.length; k++) {
-        if (k > 0) { const legMin = (chunk.legs[k] || 0) / 60; if (legMin > 0) { events.push({ type: 'travel', start: t, end: t + legMin, _k: k }); t += legMin; } }
+        const legMin = k > 0 ? (chunk.legs[k] || 0) / 60 : 0;
         const ch = pool[chunk.stops[k]];
         const durMin = (ch.estimatedDuration || 0) * 60;
+        // Vérifier si la pose peut tenir dans la journée AVEC le déjeuner éventuel
+        const startAfterTravel = t + legMin;
+        const lunchHit = lunchDur && startAfterTravel < lunchStart && startAfterTravel + durMin > lunchStart;
+        const realEnd = startAfterTravel + durMin + (lunchHit ? lunchDur : 0);
+        if (realEnd > DAY_END) {
+          // Ne tient pas → reporter sans la pousser dans events
+          deferredK.add(k);
+          break; // les stops suivants sont aussi reportés
+        }
+        if (legMin > 0) { events.push({ type: 'travel', start: t, end: t + legMin, _k: k }); t += legMin; }
         events.push({ type: 'pose', start: t, end: t + durMin, chantier: ch, _k: k, _idx: chunk.stops[k] });
         t += durMin;
         localAssign.push({ id: ch.id, iso, order: k, geo: geoByIdx[chunk.stops[k]] || null });
