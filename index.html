@@ -3430,8 +3430,11 @@ ${sign}`,
                                 onDragStart={e => { e.dataTransfer.setData('chantier', JSON.stringify(c)); setDragChantier({ id: c.id, binId: bin.id }); }}
                                 onDragEnd={() => { setDragChantier(null); setDragOverCol(null); }}
                                 style={{ cursor: 'grab', background: 'var(--amber)', color: '#7a4000', borderRadius: 6, padding: '3px 8px', fontSize: 12, fontWeight: 600, userSelect: 'none', opacity: dragChantier?.id === c.id ? 0.5 : 1 }}
-                                title={`${c.type} · ${c.city} · ${c.estimatedDuration}h`}
-                              >{c.clientName}</div>
+                                title={`${c.type} · ${c.postalCode} ${c.city} · ${c.estimatedDuration}h`}
+                              >
+                                <span style={{ fontWeight: 700 }}>{c.clientName}</span>
+                                <span style={{ fontWeight: 400, opacity: 0.8, marginLeft: 5 }}>{c.postalCode} {c.city}</span>
+                              </div>
                             ))}
                           </div>
                         </div>
