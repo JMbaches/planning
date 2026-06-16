@@ -975,18 +975,23 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, pinByDate 
       const lastStop = chunk.stops[chunk.stops.length - 1];
       const returnSiege = legToDepot(lastStop); // dernier chantier → siège
       // Si on est à moins de 1h du siège ET qu'on arrive avant 19h, on rentre le soir.
-      // Au-delà : nuit sur place — mieux vaut dormir sur place que rentrer à 20h.
-      const proche = hasDepot && returnSiege > 0 && returnSiege < SIEGE_SEUIL_SEC;
-      // Veille d'un jour fermé (férié ou fermeture JM Bâches) : on rentre forcément au siège
-      // Vérifier si le jour CALENDAIRE suivant (pas forcément un jour de pose) est fermé
+      // Règle de retour au siège :
+      // - Rentrer si : distance dépôt ≤ 1h30 ET prochain chantier > 1h de trajet
+      // - Veille de jour fermé : retour forcé quoi qu'il arrive
+      const NEXT_CHANTIER_SEUIL_SEC = 1 * 3600; // prochain chantier > 1h → vaut mieux rentrer chez soi
+      const prochainChantierSec = chunks[di + 1]?.stops?.length
+        ? legBetween(chunk.stops[chunk.stops.length - 1], chunks[di + 1].stops[0])
+        : Infinity; // pas de chantier le lendemain = dernier jour de pose
+      const depotProche = hasDepot && returnSiege > 0 && returnSiege < SIEGE_SEUIL_SEC;
+      const prochainLoin = prochainChantierSec > NEXT_CHANTIER_SEUIL_SEC;
+      // Veille de jour fermé : vérifier le jour calendaire suivant
       const todayDate = new Date(iso + 'T12:00:00');
       const tomorrowDate = new Date(todayDate); tomorrowDate.setDate(tomorrowDate.getDate() + 1);
       const tomorrowISO = toISO(tomorrowDate);
       const nextDayIsClosed = isClosedDay(tomorrowISO, closures);
-      // Aussi : si le lendemain n'est pas dans la semaine, c'est le dernier jour → déjà géré par isLastPoseDay
-      // Veille de jour fermé : retour forcé même si on arrive tard (pas de RETOUR_MAX)
       const forceReturn = nextDayIsClosed && hasDepot && returnSiege > 0;
-      let rentre = forceReturn || (proche && (endMin + returnSiege / 60 <= RETOUR_MAX));
+      // Rentrer si : forcé (férié) OU (dépôt proche ET prochain chantier loin ET on arrive avant RETOUR_MAX)
+      let rentre = forceReturn || (depotProche && prochainLoin && (endMin + returnSiege / 60 <= RETOUR_MAX));
 
       if (rentre) {
         const rs = legToDepot(chunk.stops[chunk.stops.length - 1]);
