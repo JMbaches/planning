@@ -2926,7 +2926,13 @@ ${sign}`,
           // 3) Supprimer les travel orphelins : tout travel qui commence après la dernière pose
           //    (trajet retour dépôt stocké comme travel dans les vieilles sauvegardes)
           const finalEvents = poseEnd > 0
-            ? cleanedEvents.filter(e => !(e.type === 'travel' && e.start >= poseEnd))
+            ? cleanedEvents.filter(e => {
+                // Supprimer travel orphelins après la dernière pose (sauf eveningLink légitime)
+                if (e.type === 'travel' && e.start >= poseEnd && !e.eveningLink) return false;
+                // Supprimer lunch orphelins après la dernière pose
+                if (e.type === 'lunch' && e.start >= poseEnd) return false;
+                return true;
+              })
             : cleanedEvents;
           // Si aucune pose trouvée (plan returnOnly ou autre), on borne quand même plan.endMin à DAY_END
           const safeEndMin = poseEnd || Math.min(plan.endMin || DAY_END_MIN, DAY_END_MIN);
