@@ -3338,7 +3338,7 @@ ${sign}`,
                       {days.map(d => {
                         const plan = res.dayPlans[toISO(d)];
                         const colKey = bin.id + '_' + toISO(d);
-                        const isDragTarget = !!dragChantier && dragChantier.binId === bin.id;
+                        const isDragTarget = !!dragChantier; // accept drop on any binome
                         const isOver = dragOverCol === colKey;
                         return (
                           <div key={'c' + toISO(d)}
