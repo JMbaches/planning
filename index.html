@@ -812,6 +812,7 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, pinByDate 
       }
       // b) chantiers du jour : on place tout, PUIS on tronque à 18h après insertion du déjeuner.
       //    La 1re pose qui dépasse 18h est coupée à 18h (reste demain) ; les suivantes partent demain.
+      const deferredK = new Set(); // déclaré ici pour être accessible dans la pré-vérification
       for (let k = 0; k < chunk.stops.length; k++) {
         const legMin = k > 0 ? (chunk.legs[k] || 0) / 60 : 0;
         const ch = pool[chunk.stops[k]];
@@ -834,7 +835,7 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, pinByDate 
       events = injectLunch(events, lunchStart, lunchDur);
 
       // TRONCATURE STRICTE À 18h : on parcourt dans l'ordre ; dès qu'un évènement dépasse 18h, on coupe.
-      const capped = []; const deferredK = new Set();
+      const capped = [];
       for (const ev of events) {
         if (ev.start >= DAY_END) {                      // commence après 18h → entièrement reporté
           if (ev.type === 'pose') deferredK.add(ev._k);
