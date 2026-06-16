@@ -2700,6 +2700,62 @@ function TrajetsMap({ schedules, binomes, days }) {
 /* =========================================================================
    EMPLOI DU TEMPS — planning minuté heure par heure, jour par jour
    ========================================================================= */
+// Nettoie les schedules d'une semaine sauvegardée (purge vieilles sauvegardes corrompues)
+function cleanSavedSchedules(schedules) {
+  const DAY_END_MIN = 18 * 60;
+  const cleaned = {};
+  for (const [binId, res] of Object.entries(schedules)) {
+    const cleanedDayPlans = {};
+    for (const [iso, plan] of Object.entries(res.dayPlans || {})) {
+      const cleanedEvents = (plan.events || [])
+        .filter(e => !(e.type === 'travelEvening' && !e.returnDepot))
+        .filter(e => {
+          if (e.type !== 'travelEvening') return true;
+          const poses = (plan.events || []).filter(p => p.type === 'pose');
+          if (!poses.length) return false;
+          const lastPoseEnd = Math.max(...poses.map(p => p.end));
+          return Math.abs(e.start - lastPoseEnd) < 5;
+        })
+        .filter(e => e.start < DAY_END_MIN || e.type === 'travelEvening' || e.type === 'travelApproach')
+        .map(e => {
+          if ((e.type === 'travelEvening' || e.type === 'travelApproach') || e.end <= DAY_END_MIN) return e;
+          return { ...e, end: DAY_END_MIN };
+        });
+      const poseEnd = cleanedEvents.filter(e => e.type === 'pose').reduce((m, e) => Math.max(m, e.end), 0);
+      const hasTruncatedPose = cleanedEvents.some(e =>
+        e.type === 'pose' && Math.abs(e.end - DAY_END_MIN) < 0.5 && !e.contd
+      );
+      const finalEvents = hasTruncatedPose ? [] : (poseEnd > 0
+        ? cleanedEvents.filter(e => {
+            if (e.type === 'travel' && e.start >= poseEnd && !e.eveningLink) return false;
+            if (e.type === 'lunch' && e.start >= poseEnd) return false;
+            return true;
+          })
+        : cleanedEvents);
+      const safeEndMin = poseEnd || Math.min(plan.endMin || DAY_END_MIN, DAY_END_MIN);
+      cleanedDayPlans[iso] = { ...plan, events: finalEvents, endMin: safeEndMin, siegeReturnSec: plan.staysOnSite ? 0 : plan.siegeReturnSec };
+    }
+    // Second pass : supprimer les poses contd orphelines
+    const isoList = Object.keys(cleanedDayPlans).sort();
+    isoList.forEach((iso, idx) => {
+      const plan = cleanedDayPlans[iso];
+      if (!plan || !plan.events) return;
+      const prevISO = isoList[idx - 1];
+      const prevPlan = prevISO ? cleanedDayPlans[prevISO] : null;
+      const prevHasPoses = prevPlan && (prevPlan.events || []).some(e => e.type === 'pose');
+      const firstPose = plan.events.find(e => e.type === 'pose');
+      if (firstPose && firstPose.contd && !prevHasPoses) {
+        cleanedDayPlans[iso] = {
+          ...plan,
+          events: plan.events.filter(e => !(e.type === 'pose' && e.contd && plan.events.indexOf(e) === plan.events.findIndex(x => x.type === 'pose'))),
+        };
+      }
+    });
+    cleaned[binId] = { ...res, dayPlans: cleanedDayPlans };
+  }
+  return cleaned;
+}
+
 function EmploiDuTemps({ chantiers, binomes, depot, workday, unavail, upsert, showToast, setTab, setPendingEdit }) {
   const [weekStart, setWeekStart] = useState(getWeekStart(new Date()));
   const [schedules, setSchedules] = useState({}); // binId -> { dayPlans, assignments, overflow, source, count }
@@ -2904,70 +2960,7 @@ ${sign}`,
     const saved = all[weekKey];
     if (saved && saved.schedules) {
       // Nettoyer les anciens travelEvening de nuit sur place (corrigés depuis)
-      const cleaned = {};
-      for (const [binId, res] of Object.entries(saved.schedules)) {
-        const cleanedDayPlans = {};
-        for (const [iso, plan] of Object.entries(res.dayPlans || {})) {
-          const DAY_END_MIN = 18 * 60;
-          // 1) Supprimer les anciens travelEvening de nuit sur place (sans returnDepot)
-          // 2) Tronquer tous les events non-retour à DAY_END (purge des sauvegardes anciennes où la troncature n'existait pas)
-          const cleanedEvents = (plan.events || [])
-            .filter(e => !(e.type === 'travelEvening' && !e.returnDepot))
-            // Supprimer les travelEvening dont le start ne colle pas à la fin des poses (start corrompu)
-            .filter(e => {
-              if (e.type !== 'travelEvening') return true;
-              const poses = (plan.events || []).filter(p => p.type === 'pose');
-              if (!poses.length) return false;
-              const lastPoseEnd = Math.max(...poses.map(p => p.end));
-              return Math.abs(e.start - lastPoseEnd) < 5; // tolérance 5 min
-            })
-            .filter(e => e.start < DAY_END_MIN || e.type === 'travelEvening' || e.type === 'travelApproach')
-            .map(e => {
-              if ((e.type === 'travelEvening' || e.type === 'travelApproach') || e.end <= DAY_END_MIN) return e;
-              return { ...e, end: DAY_END_MIN };
-            });
-          // endMin = fin de la dernière POSE
-          const poseEnd = cleanedEvents.filter(e => e.type === 'pose').reduce((m, e) => Math.max(m, e.end), 0);
-          // 3) Supprimer les travel orphelins : tout travel qui commence après la dernière pose
-          //    (trajet retour dépôt stocké comme travel dans les vieilles sauvegardes)
-          // Détecter les poses tronquées à 18h pile (vestige d'ancienne version avec carryOut)
-          // Une pose tronquée a end=DAY_END_MIN exactement et n'a pas contd:true
-          const hasTruncatedPose = cleanedEvents.some(e =>
-            e.type === 'pose' && Math.abs(e.end - DAY_END_MIN) < 0.5 && !e.contd
-          );
-          // Si pose tronquée détectée : supprimer toute la journée (sera recalculée)
-          // Sinon : nettoyage standard des orphelins
-          const finalEvents = hasTruncatedPose ? [] : (poseEnd > 0
-            ? cleanedEvents.filter(e => {
-                if (e.type === 'travel' && e.start >= poseEnd && !e.eveningLink) return false;
-                if (e.type === 'lunch' && e.start >= poseEnd) return false;
-                return true;
-              })
-            : cleanedEvents);
-          // Si aucune pose trouvée (plan returnOnly ou autre), on borne quand même plan.endMin à DAY_END
-          const safeEndMin = poseEnd || Math.min(plan.endMin || DAY_END_MIN, DAY_END_MIN);
-          cleanedDayPlans[iso] = { ...plan, events: finalEvents, endMin: safeEndMin, siegeReturnSec: plan.staysOnSite ? 0 : plan.siegeReturnSec };
-        }
-        // Second pass : supprimer les poses contd orphelines (dont le jour précédent a été vidé)
-        const isoList = Object.keys(cleanedDayPlans).sort();
-        isoList.forEach((iso, idx) => {
-          const plan = cleanedDayPlans[iso];
-          if (!plan || !plan.events) return;
-          const prevISO = isoList[idx - 1];
-          const prevPlan = prevISO ? cleanedDayPlans[prevISO] : null;
-          const prevHasPoses = prevPlan && (prevPlan.events || []).some(e => e.type === 'pose');
-          // Si la journée commence par une pose contd mais que la veille est vide → supprimer les contd
-          const firstPose = plan.events.find(e => e.type === 'pose');
-          if (firstPose && firstPose.contd && !prevHasPoses) {
-            cleanedDayPlans[iso] = {
-              ...plan,
-              events: plan.events.filter(e => !(e.type === 'pose' && e.contd && plan.events.indexOf(e) === plan.events.findIndex(x => x.type === 'pose'))),
-            };
-          }
-        });
-        cleaned[binId] = { ...res, dayPlans: cleanedDayPlans };
-      }
-      setSchedules(cleaned);
+      setSchedules(cleanSavedSchedules(saved.schedules));
       setUsedPools(saved.usedPools || null);
       setUngeocoded(saved.ungeocoded || []);
       setSavedAt(saved.savedAt || null);
@@ -2989,7 +2982,8 @@ ${sign}`,
     const mPools = binomes.map(b => ({ bin: b, pool: pool.filter(c => c.scheduledBinome === b.id) }));
     // Jours déjà occupés par un chantier VALIDÉ (verrouillé) cette semaine, par binôme → on n'y replanifie rien.
     const weekISO = days.slice(0, 4).map(d => toISO(d));
-    const closures = sGet(SK.closures, []);
+    // Fermetures = jours indisponibles pour tous les binômes (scope 'all')
+    const closures = (sGet(SK.settings, {}).unavail || []).filter(u => u.scope === 'all').map(u => u.from).filter(Boolean);
     const lockedDaysByBin = {};
     binomes.forEach(b => {
       lockedDaysByBin[b.id] = new Set(
@@ -3929,8 +3923,7 @@ function Parametres({ binomes, setBinomes, poseTypes, setPoseTypes, depot, setDe
   const [keyDraft, setKeyDraft] = useState(apiKey);
   const [modelDraft, setModelDraft] = useState(() => sGet(SK.modelName, DEFAULT_MODEL));
   const [orsDraft, setOrsDraft] = useState(() => sGet(SK.orsKey, ''));
-  const [closuresList, setClosuresList] = useState(() => sGet(SK.closures, []));
-  const [closureDraft, setClosureDraft] = useState('');
+
   const [orsSaved, setOrsSaved] = useState(() => !!sGet(SK.orsKey, ''));
   const [orsTesting, setOrsTesting] = useState(false);
   const [orsTestResult, setOrsTestResult] = useState(null); // { ok, message }
@@ -4124,7 +4117,14 @@ function Parametres({ binomes, setBinomes, poseTypes, setPoseTypes, depot, setDe
         // Emplois du temps enregistrés : fusion par clé de semaine (sans écraser une semaine existante)
         if (data.edt && typeof data.edt === 'object') {
           const curEdt = sGet(SK.edt, {}) || {};
-          const mergedEdt = { ...data.edt, ...curEdt };
+          // Nettoyer les schedules importés avant fusion
+          const cleanedImportEdt = {};
+          for (const [wk, wkData] of Object.entries(data.edt)) {
+            cleanedImportEdt[wk] = wkData.schedules
+              ? { ...wkData, schedules: cleanSavedSchedules(wkData.schedules) }
+              : wkData;
+          }
+          const mergedEdt = { ...cleanedImportEdt, ...curEdt };
           sSet(SK.edt, mergedEdt);
         }
         // Clés API : restaurées si présentes dans la sauvegarde. On écrase la clé locale
@@ -4225,7 +4225,7 @@ function Parametres({ binomes, setBinomes, poseTypes, setPoseTypes, depot, setDe
           <div className="flex-1">
             <h2 className="font-display text-2xl font-semibold mb-1">Indisponibilités, congés et jours fériés</h2>
             <p className="text-sm mb-4" style={{ color: 'var(--ink-soft)' }}>
-              Déclare les jours où une équipe (ou tout le monde) ne travaille pas. Lors de l'optimisation, ces jours sont bloqués et les chantiers reportés sur les autres jours disponibles de la semaine.
+              Déclare les jours où une équipe (ou tout le monde) ne travaille pas. Lors de l'optimisation, ces jours sont bloqués et les chantiers reportés. Les jours marqués "Tous les binômes" font aussi rentrer les poseurs au siège la veille (comme un jour férié).
             </p>
             <div className="grid md:grid-cols-4 gap-3 items-end">
               <Field label="Qui ?">
@@ -4355,42 +4355,6 @@ function Parametres({ binomes, setBinomes, poseTypes, setPoseTypes, depot, setDe
         </div>
       </section>
 
-      <section className="card p-6 mb-6 relative overflow-hidden">
-        <div className="absolute top-0 left-0 right-0 h-1" style={{ background: 'var(--accent)' }} />
-        <div className="flex items-start gap-4">
-          <div style={{ background: 'var(--accent)', borderRadius: 10, padding: 10, flexShrink: 0 }}>
-            <I.calendarDays size={20} color="#fff" />
-          </div>
-          <div style={{ flex: 1 }}>
-            <h2 className="font-display text-2xl font-semibold mb-1">Fermetures entreprise</h2>
-            <p className="text-sm mb-3" style={{ color: 'var(--ink-faint)' }}>
-              Les jours fériés français sont automatiquement détectés. Ajoute ici les fermetures spécifiques JM Bâches (ponts, congés…). La veille d'un jour fermé, les poseurs rentrent systématiquement au siège.
-            </p>
-            <div className="flex gap-2 mb-3">
-              <input type="date" value={closureDraft} onChange={e => setClosureDraft(e.target.value)} style={{ flex: 1 }} />
-              <button className="btn-primary" onClick={() => {
-                if (!closureDraft) return;
-                if (closuresList.includes(closureDraft)) { showToast('Date déjà ajoutée'); return; }
-                const next = [...closuresList, closureDraft].sort();
-                setClosuresList(next); sSet(SK.closures, next);
-                setClosureDraft('');
-                showToast('Fermeture ajoutée');
-              }}><I.plus size={14} /> Ajouter</button>
-            </div>
-            {closuresList.length === 0
-              ? <div className="text-sm" style={{ color: 'var(--ink-faint)' }}>Aucune fermeture spécifique.</div>
-              : <div className="flex flex-wrap gap-2">
-                  {closuresList.map(d => (
-                    <div key={d} className="flex items-center gap-1 px-2 py-1 rounded text-sm" style={{ background: 'var(--cream)', border: '1px solid var(--border)' }}>
-                      <span>{new Date(d + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}</span>
-                      <button onClick={() => { const next = closuresList.filter(x => x !== d); setClosuresList(next); sSet(SK.closures, next); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-soft)', padding: '0 2px' }}>×</button>
-                    </div>
-                  ))}
-                </div>
-            }
-          </div>
-        </div>
-      </section>
 
       <section className="card p-6 mb-6 relative overflow-hidden">
         <div className="absolute top-0 left-0 right-0 h-1" style={{ background: 'var(--navy)' }} />
