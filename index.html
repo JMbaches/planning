@@ -3014,9 +3014,7 @@ ${sign}`,
     const updated = { ...chantierObj, scheduledBinome: binId, scheduledDate: iso, status: 'planifie' };
     setComputing(true); setProgress('Calcul de la proposition…');
     try {
-      const depot = settings.depot || {};
-      const workday = settings.workday || {};
-      const unavail = settings.unavailabilities || [];
+      // depot, workday, unavail sont déjà disponibles via les props d'EmploiDuTemps
       const existingRes = schedules[binId];
       const existingPool = existingRes
         ? existingRes.assignments.map(a => chantiers.find(c => c.id === a.id)).filter(Boolean)
