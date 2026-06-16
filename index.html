@@ -3345,7 +3345,14 @@ ${sign}`,
                             style={{ position: 'relative', height: gridHeight, borderLeft: '1px solid var(--border)', background: isOver ? 'rgba(59,130,246,0.08)' : 'transparent', transition: 'background 0.15s' }}
                             onDragOver={isDragTarget ? e => { e.preventDefault(); setDragOverCol(colKey); } : undefined}
                             onDragLeave={isDragTarget ? () => setDragOverCol(null) : undefined}
-                            onDrop={isDragTarget ? e => { e.preventDefault(); try { const c = JSON.parse(e.dataTransfer.getData('chantier')); dropOnDay(c, bin.id, toISO(d)); } catch(_){} } : undefined}
+                            onDrop={isDragTarget ? e => {
+                                e.preventDefault();
+                                const raw = e.dataTransfer.getData('chantier');
+                                console.log('[drop] raw=', raw, 'binId=', bin.id, 'iso=', toISO(d));
+                                if (!raw) return;
+                                try { const c = JSON.parse(raw); dropOnDay(c, bin.id, toISO(d)); }
+                                catch(err) { console.error('[drop] parse error', err); }
+                              } : undefined}
                           >
                             {isDragTarget && (
                               <div style={{ position: 'absolute', inset: 0, border: isOver ? '2px dashed var(--accent)' : '2px dashed transparent', borderRadius: 4, pointerEvents: 'none', transition: 'border-color 0.15s', zIndex: 10 }} />
