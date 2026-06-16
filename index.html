@@ -565,7 +565,7 @@ function injectLunch(events, lunchStart, lunchDur) {
    ça tient avant 18h, sinon le lendemain matin (nuit sur place). Un chantier
    qui ne tient pas en 4 jours part en « à reporter ».
    pool : chantiers du binôme à caser. days : 6 dates Lun→Sam. */
-async function planWeek(poolInput, depot, workday, days, poseDaysISO) {
+async function planWeek(poolInput, depot, workday, days, poseDaysISO, pinByDate = false) {
   // Séparer le pool selon la fenêtre :
   // - trop tôt (notBefore dans le futur) → exclu, contrainte dure
   // - en retard (notAfter dépassé) → ajouté en fin de pool, contrainte souple
@@ -709,7 +709,9 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO) {
       const keepS = [], keepL = [];
       for (let k = 0; k < ch.stops.length; k++) {
         const c = pool[ch.stops[k]];
-        if (c.fixedTime && c.scheduledDate && dayIndexOf(c.scheduledDate) >= 0) {
+        // Épingler à la date : chantier à heure fixe OU (mode manuel) chantier avec date assignée manuellement
+        const isPinned = c.scheduledDate && dayIndexOf(c.scheduledDate) >= 0 && (c.fixedTime || pinByDate);
+        if (isPinned) {
           fixedEntries.push({ idx: ch.stops[k] });
         } else { keepS.push(ch.stops[k]); keepL.push(ch.legs[k]); }
       }
@@ -2942,7 +2944,7 @@ ${sign}`,
           if (!bp.length) continue;
           setProgress(bin.name);
           const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, bin.id, iso) && !lockedDaysByBin[bin.id].has(iso));
-          next[bin.id] = await planWeek(bp, depot, workday, days, poseDaysISO);
+          next[bin.id] = await planWeek(bp, depot, workday, days, poseDaysISO, true);
         }
         setSchedules(mergeWithLocked(next));
         setUsedPools(mPools);
