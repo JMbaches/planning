@@ -2668,6 +2668,8 @@ function EmploiDuTemps({ chantiers, binomes, depot, workday, unavail, upsert, sh
   const [savedAt, setSavedAt] = useState(null);     // horodatage du dernier enregistrement de cette semaine
   const [mailFor, setMailFor] = useState(null);     // chantier dont on prépare l'e-mail (affiche le choix proposition/confirmation)
   const [exportMenu, setExportMenu] = useState(false); // affiche le choix d'export Excel
+  const [dragChantier, setDragChantier] = useState(null); // { id, binId } en cours de drag
+  const [dragOverCol, setDragOverCol] = useState(null);   // 'binId_iso' survolé pendant le drag
 
   const weekKey = useMemo(() => toISO(weekStart), [weekStart]); // clé d'enregistrement = lundi ISO
 
@@ -2992,6 +2994,40 @@ ${sign}`,
     try { localStorage.setItem('jmb_dirty_since', String(Date.now())); } catch (e) {}
   };
 
+  // Drag & drop : déposer un chantier sur un jour d'un binôme
+  const dropOnDay = async (chantierObj, binId, iso) => {
+    setDragChantier(null); setDragOverCol(null);
+    if (!chantierObj || !binId || !iso) return;
+    const bin = binomes.find(b => b.id === binId);
+    if (!bin) return;
+    // Assigner le chantier à ce binôme + cette date
+    const updated = { ...chantierObj, scheduledBinome: binId, scheduledDate: iso, status: 'planifie' };
+    upsert(updated);
+    setComputing(true); setProgress(bin.name);
+    try {
+      const depot = settings.depot || {};
+      const workday = settings.workday || {};
+      const unavail = settings.unavailabilities || [];
+      // Pool de ce binôme : chantiers déjà assignés + le nouveau
+      const updatedList = chantiers.map(c => c.id === chantierObj.id ? updated : c);
+      const binPool = updatedList.filter(c =>
+        c.scheduledBinome === binId &&
+        c.status !== 'valide' && c.status !== 'fait' &&
+        days.some(d => toISO(d) === (c.scheduledDate || ''))
+      );
+      // Jours verrouillés = jours avec chantiers validés
+      const lockedDays = new Set(
+        updatedList.filter(c => c.scheduledBinome === binId && c.status === 'valide' && c.scheduledDate)
+          .map(c => c.scheduledDate)
+      );
+      const poseDaysISO = days.slice(0, 4).map(d => toISO(d))
+        .filter(d => !isUnavailable(unavail, binId, d) && !lockedDays.has(d));
+      const result = await planWeek(binPool, depot, workday, days, poseDaysISO, true);
+      setSchedules(prev => ({ ...prev, [binId]: result }));
+    } catch(e) { setError(String(e)); }
+    finally { setComputing(false); setProgress(''); }
+  };
+
   const clearSaved = () => {
     const all = sGet(SK.edt, {});
     delete all[weekKey];
@@ -3283,8 +3319,19 @@ ${sign}`,
                       </div>
                       {days.map(d => {
                         const plan = res.dayPlans[toISO(d)];
+                        const colKey = bin.id + '_' + toISO(d);
+                        const isDragTarget = !!dragChantier && dragChantier.binId === bin.id;
+                        const isOver = dragOverCol === colKey;
                         return (
-                          <div key={'c' + toISO(d)} style={{ position: 'relative', height: gridHeight, borderLeft: '1px solid var(--border)' }}>
+                          <div key={'c' + toISO(d)}
+                            style={{ position: 'relative', height: gridHeight, borderLeft: '1px solid var(--border)', background: isOver ? 'rgba(59,130,246,0.08)' : 'transparent', transition: 'background 0.15s' }}
+                            onDragOver={isDragTarget ? e => { e.preventDefault(); setDragOverCol(colKey); } : undefined}
+                            onDragLeave={isDragTarget ? () => setDragOverCol(null) : undefined}
+                            onDrop={isDragTarget ? e => { e.preventDefault(); try { const c = JSON.parse(e.dataTransfer.getData('chantier')); dropOnDay(c, bin.id, toISO(d)); } catch(_){} } : undefined}
+                          >
+                            {isDragTarget && (
+                              <div style={{ position: 'absolute', inset: 0, border: isOver ? '2px dashed var(--accent)' : '2px dashed transparent', borderRadius: 4, pointerEvents: 'none', transition: 'border-color 0.15s', zIndex: 10 }} />
+                            )}
                             {hours.map(h => (
                               <div key={h} style={{ position: 'absolute', top: (h - axisStartH) * HOUR_PX, left: 0, right: 0, borderTop: '1px solid var(--border)', opacity: 0.45 }} />
                             ))}
@@ -3374,7 +3421,20 @@ ${sign}`,
                   return (
                     <div className="mt-3 p-3 rounded text-sm" style={{ background: '#FBF1D9', color: '#8B5E00' }}>
                       {autres.length > 0 && (
-                        <div><strong>Ne tient pas dans la semaine</strong> ({autres.length}) — à reporter : {autres.map(c => c.clientName).join(', ')}.</div>
+                        <div>
+                          <strong>Ne tient pas dans la semaine</strong> ({autres.length}) — glisse un chantier sur un jour pour le forcer :
+                          <div className="flex flex-wrap gap-2 mt-2">
+                            {autres.map(c => (
+                              <div key={c.id}
+                                draggable
+                                onDragStart={e => { e.dataTransfer.setData('chantier', JSON.stringify(c)); setDragChantier({ id: c.id, binId: bin.id }); }}
+                                onDragEnd={() => { setDragChantier(null); setDragOverCol(null); }}
+                                style={{ cursor: 'grab', background: 'var(--amber)', color: '#7a4000', borderRadius: 6, padding: '3px 8px', fontSize: 12, fontWeight: 600, userSelect: 'none', opacity: dragChantier?.id === c.id ? 0.5 : 1 }}
+                                title={`${c.type} · ${c.city} · ${c.estimatedDuration}h`}
+                              >{c.clientName}</div>
+                            ))}
+                          </div>
+                        </div>
                       )}
                       {fenetre.length > 0 && (
                         <div className={autres.length ? 'mt-2' : ''}>
