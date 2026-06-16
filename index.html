@@ -228,7 +228,8 @@ const dateAllowed = (chantier, iso) => {
   // chantier d'urgence à heure fixe : il est verrouillé sur SA date — aucun autre jour autorisé
   if (chantier.fixedTime && chantier.scheduledDate) return chantier.scheduledDate === iso;
   if (chantier.notBefore && iso < chantier.notBefore) return false;
-  if (chantier.notAfter && iso > chantier.notAfter) return false;
+  // notAfter : contrainte souple — ignorée si le chantier est marqué _softWindow (deadline dépassée)
+  if (chantier.notAfter && iso > chantier.notAfter && !chantier._softWindow) return false;
   return true;
 };
 // Renvoie true si AUCUN des jours posables de la semaine ne convient au chantier (donc à reporter).
@@ -236,6 +237,12 @@ const windowMissesWeek = (chantier, poseDaysISO) => {
   if (chantier.fixedTime && chantier.scheduledDate) return !poseDaysISO.includes(chantier.scheduledDate);
   if (!chantier.notBefore && !chantier.notAfter) return false;
   return !poseDaysISO.some(iso => dateAllowed(chantier, iso));
+};
+// Renvoie true si la semaine est AVANT la fenêtre du chantier (contrainte dure : trop tôt).
+// Renvoie false si la semaine est APRÈS notAfter : contrainte souple, on peut quand même poser.
+const windowTooEarly = (chantier, poseDaysISO) => {
+  if (!chantier.notBefore) return false;
+  return !poseDaysISO.some(iso => iso >= chantier.notBefore);
 };
 // Dimanche de Pâques pour une année (algorithme de Gauss / Butcher) → {month (1-12), day}
 const easterSunday = (year) => {
@@ -559,12 +566,19 @@ function injectLunch(events, lunchStart, lunchDur) {
    qui ne tient pas en 4 jours part en « à reporter ».
    pool : chantiers du binôme à caser. days : 6 dates Lun→Sam. */
 async function planWeek(poolInput, depot, workday, days, poseDaysISO) {
-  // Écarter les chantiers dont la fenêtre client ne croise pas la semaine
+  // Séparer le pool selon la fenêtre :
+  // - trop tôt (notBefore dans le futur) → exclu, contrainte dure
+  // - en retard (notAfter dépassé) → ajouté en fin de pool, contrainte souple
+  // - dans la fenêtre ou sans contrainte → pool normal
   const poseListEarly = (Array.isArray(poseDaysISO) && poseDaysISO.length >= 0)
     ? poseDaysISO.slice(0, 4)
     : days.slice(0, 4).map(d => toISO(d));
-  const outOfWindow = poolInput.filter(c => windowMissesWeek(c, poseListEarly));
-  const pool = poolInput.filter(c => !windowMissesWeek(c, poseListEarly));
+  const tooEarly = poolInput.filter(c => windowTooEarly(c, poseListEarly));
+  const late     = poolInput.filter(c => !windowTooEarly(c, poseListEarly) && windowMissesWeek(c, poseListEarly));
+  const inWindow = poolInput.filter(c => !windowTooEarly(c, poseListEarly) && !windowMissesWeek(c, poseListEarly));
+  // Les chantiers en retard entrent dans le pool en dernier (priorité basse) avec flag _softWindow
+  const pool = [...inWindow, ...late.map(c => ({ ...c, _softWindow: true }))];
+  const outOfWindow = tooEarly; // seuls les "trop tôt" sont vraiment hors fenêtre
 
   const dayStart   = parseHHMM(workday?.start, 480);
   const DAY_END    = 18 * 60;   // plafond journée : 18h00
@@ -984,7 +998,8 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO) {
     }
   }
 
-  // Chantiers écartés car leur fenêtre client ne tombe pas dans cette semaine → à reporter, motif marqué.
+  // Chantiers écartés car leur fenêtre est dans le futur (trop tôt) → à reporter.
+  // Les chantiers en retard (_softWindow) ont été tentés dans le pool — s'ils n'ont pas été casés, ils sont dans overflow.
   outOfWindow.forEach(c => overflow.push(c));
 
   return { dayPlans, assignments, overflow, source, count: pool.length, depotGeo, outOfWindow };
@@ -1072,7 +1087,13 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
   //    On remplit en priorité les binômes qui ont le plus de capacité locale libre → le binôme parti
   //    loin (ex : Paris) reçoit peu (ou pas) de local, pour que tout son Paris tienne dans la semaine.
   const localCapacityLeft = (b) => (WEEK_POSE_BUDGET - farLoadByBin[b]) - (loadByBin[b] - farLoadByBin[b]);
-  proche.sort((a, b) => (valid[b].estimatedDuration || 0) - (valid[a].estimatedDuration || 0));
+  // Les chantiers en retard (_softWindow) passent après les autres dans le tri local
+  proche.sort((a, b) => {
+    const aLate = valid[a]._softWindow ? 1 : 0;
+    const bLate = valid[b]._softWindow ? 1 : 0;
+    if (aLate !== bLate) return aLate - bLate;
+    return (valid[b].estimatedDuration || 0) - (valid[a].estimatedDuration || 0);
+  });
   proche.forEach(i => {
     // binôme avec le PLUS de capacité locale restante (les binômes "lointains" en ont le moins)
     let best = 0; for (let b = 1; b < k; b++) if (localCapacityLeft(b) > localCapacityLeft(best)) best = b;
