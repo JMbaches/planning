@@ -2954,12 +2954,18 @@ ${sign}`,
   const hasAny = mode === 'auto' ? allToPlan.length > 0 : manualPools.some(p => p.pool.length);
   // Tous les chantiers non casés cette semaine (union de tous les overflow, dédupliqués)
   const allOverflow = useMemo(() => {
+    // Chantiers casés dans n'importe quel binôme
+    const placed = new Set();
+    Object.values(schedules).forEach(res => {
+      (res.assignments || []).forEach(a => placed.add(a.id));
+    });
     const seen = new Set();
     const result = [];
     Object.values(schedules).forEach(res => {
-      (res.overflow || []).forEach(c => { if (!seen.has(c.id)) { seen.add(c.id); result.push(c); } });
+      (res.overflow || []).forEach(c => {
+        if (!seen.has(c.id) && !placed.has(c.id)) { seen.add(c.id); result.push(c); }
+      });
     });
-    // Trier : d'abord ceux sans fenêtre ou dans la fenêtre, puis les _softWindow
     return result.sort((a, b) => (a._softWindow ? 1 : 0) - (b._softWindow ? 1 : 0));
   }, [schedules]);
 
