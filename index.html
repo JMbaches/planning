@@ -4131,6 +4131,25 @@ function Parametres({ binomes, setBinomes, poseTypes, setPoseTypes, depot, setDe
       </section>
 
       <section className="card p-6 mb-6 relative overflow-hidden">
+        <div className="absolute top-0 left-0 right-0 h-1" style={{ background: 'var(--amber)' }} />
+        <div className="flex items-start gap-4">
+          <div style={{ background: 'var(--amber)', borderRadius: 10, padding: 10, flexShrink: 0 }}>
+            <I.mapPin size={20} color="#fff" />
+          </div>
+          <div style={{ flex: 1 }}>
+            <h2 className="font-display text-2xl font-semibold mb-1">Cache géocodage</h2>
+            <p className="text-sm mb-3" style={{ color: 'var(--ink-faint)' }}>
+              Les coordonnées GPS des adresses sont mises en cache pour accélérer les calculs. Si un trajet semble aberrant, vider le cache force un nouveau géocodage au prochain lancement.
+            </p>
+            <button className="btn-secondary" onClick={() => {
+              localStorage.removeItem('jmb_geocache_v1');
+              showToast('Cache géocodage vidé — les adresses seront re-géocodées au prochain calcul');
+            }}><I.trash size={14} /> Vider le cache géocodage</button>
+          </div>
+        </div>
+      </section>
+
+      <section className="card p-6 mb-6 relative overflow-hidden">
         <div className="absolute top-0 left-0 right-0 h-1" style={{ background: 'var(--navy)' }} />
         <div className="flex items-start gap-4">
           <div className="w-12 h-12 rounded flex items-center justify-center shrink-0" style={{ background: 'var(--navy)' }}>
