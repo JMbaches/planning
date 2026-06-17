@@ -2715,9 +2715,9 @@ function TrajetsMap({ schedules, binomes, days }) {
 function cleanSavedSchedules(schedules) {
   const DAY_END_MIN = 18 * 60;
   const cleaned = {};
-  for (const [binId, res] of Object.entries(schedules)) {
+  Object.entries(schedules).forEach(([binId, res]) => {
     const cleanedDayPlans = {};
-    for (const [iso, plan] of Object.entries(res.dayPlans || {})) {
+    Object.entries(res.dayPlans || {}).forEach(([iso, plan]) => {
       const cleanedEvents = (plan.events || [])
         .filter(e => !(e.type === 'travelEvening' && !e.returnDepot))
         .filter(e => {
@@ -2745,7 +2745,7 @@ function cleanSavedSchedules(schedules) {
         : cleanedEvents);
       const safeEndMin = poseEnd || Math.min(plan.endMin || DAY_END_MIN, DAY_END_MIN);
       cleanedDayPlans[iso] = { ...plan, events: finalEvents, endMin: safeEndMin, siegeReturnSec: plan.staysOnSite ? 0 : plan.siegeReturnSec };
-    }
+    }); // end forEach iso
     // Second pass : supprimer les poses contd orphelines
     const isoList = Object.keys(cleanedDayPlans).sort();
     isoList.forEach((iso, idx) => {
@@ -2763,7 +2763,7 @@ function cleanSavedSchedules(schedules) {
       }
     });
     cleaned[binId] = { ...res, dayPlans: cleanedDayPlans };
-  }
+  }); // end forEach binId
   return cleaned;
 }
 
@@ -4129,11 +4129,11 @@ function Parametres({ binomes, setBinomes, poseTypes, setPoseTypes, depot, setDe
           const curEdt = sGet(SK.edt, {}) || {};
           // Nettoyer les schedules importés avant fusion
           const cleanedImportEdt = {};
-          for (const [wk, wkData] of Object.entries(data.edt)) {
+          Object.entries(data.edt).forEach(([wk, wkData]) => {
             cleanedImportEdt[wk] = wkData.schedules
               ? { ...wkData, schedules: cleanSavedSchedules(wkData.schedules) }
               : wkData;
-          }
+          });
           const mergedEdt = { ...cleanedImportEdt, ...curEdt };
           sSet(SK.edt, mergedEdt);
         }
