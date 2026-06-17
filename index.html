@@ -2715,9 +2715,9 @@ function TrajetsMap({ schedules, binomes, days }) {
 function cleanSavedSchedules(schedules) {
   const DAY_END_MIN = 18 * 60;
   const cleaned = {};
-  Object.entries(schedules).forEach(([binId, res]) => {
+  for (const [binId, res] of Object.entries(schedules)) {
     const cleanedDayPlans = {};
-    Object.entries(res.dayPlans || {}).forEach(([iso, plan]) => {
+    for (const [iso, plan] of Object.entries(res.dayPlans || {})) {
       const cleanedEvents = (plan.events || [])
         .filter(e => !(e.type === 'travelEvening' && !e.returnDepot))
         .filter(e => {
@@ -2745,7 +2745,7 @@ function cleanSavedSchedules(schedules) {
         : cleanedEvents);
       const safeEndMin = poseEnd || Math.min(plan.endMin || DAY_END_MIN, DAY_END_MIN);
       cleanedDayPlans[iso] = { ...plan, events: finalEvents, endMin: safeEndMin, siegeReturnSec: plan.staysOnSite ? 0 : plan.siegeReturnSec };
-    }); // end forEach iso
+    }
     // Second pass : supprimer les poses contd orphelines
     const isoList = Object.keys(cleanedDayPlans).sort();
     isoList.forEach((iso, idx) => {
@@ -2763,7 +2763,7 @@ function cleanSavedSchedules(schedules) {
       }
     });
     cleaned[binId] = { ...res, dayPlans: cleanedDayPlans };
-  }); // end forEach binId
+  }
   return cleaned;
 }
 
@@ -3673,51 +3673,58 @@ ${sign}`,
 
       {editingCh && <QuickModal chantier={editingCh} binomes={binomes} onClose={() => setEditingCh(null)} onSave={(ch) => { upsert(ch); setEditingCh(null); }} />}
 
-      {dropProposal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
-          <div style={{ background: 'var(--paper)', borderRadius: 12, padding: 24, maxWidth: 640, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
-            <div className="font-display text-xl font-semibold mb-1">Ajouter {dropProposal.chantierObj.clientName} ?</div>
-            <div className="text-sm mb-4" style={{ color: 'var(--ink-soft)' }}>
-              {dropProposal.bin.name} · {new Date(dropProposal.iso + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })} · {dropProposal.chantierObj.postalCode} {dropProposal.chantierObj.city} · {dropProposal.chantierObj.estimatedDuration}h
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
-              {[['Avant', dropProposal.currentPlan?.dayPlans, 'var(--ink-soft)'], ['Après', dropProposal.proposedResult?.dayPlans, 'var(--teal-deep)']].map(([label, dayPlans, color]) => {
-                const plan = dayPlans?.[dropProposal.iso];
-                const poses = plan ? (plan.events || []).filter(e => e.type === 'pose') : [];
-                return (
-                  <div key={label}>
-                    <div className="text-xs font-semibold mb-2" style={{ color, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</div>
-                    {!plan ? <div style={{ color: 'var(--ink-faint)', fontSize: 13 }}>Journée vide</div> : (
-                      <div className="space-y-1">
-                        {poses.map((e, i) => (
-                          <div key={i} className="flex items-center gap-2 p-2 rounded" style={{ background: 'var(--cream)', fontSize: 12 }}>
-                            <span style={{ fontFamily: 'monospace', color: 'var(--ink-soft)', minWidth: 40 }}>{minToHHMM(e.start)}</span>
-                            <span style={{ fontWeight: 600 }}>{e.chantier?.clientName || '—'}</span>
-                            <span style={{ color: 'var(--ink-faint)', marginLeft: 'auto' }}>{e.chantier?.city} · {e.chantier?.estimatedDuration}h</span>
-                          </div>
-                        ))}
-                        {poses.length === 0 && <div style={{ color: 'var(--ink-faint)', fontSize: 12 }}>Aucune pose</div>}
-                        <div style={{ fontSize: 11, color: 'var(--ink-faint)', marginTop: 4 }}>
-                          fin {minToHHMM(plan.endMin)} · {fmtDuration((plan.approachSec || 0) + (plan.totalDriveSec || 0) + (plan.siegeReturnSec || 0))} route
-                        </div>
-                      </div>
-                    )}
+      {dropProposal && (() => {
+        const { chantierObj, bin, iso, currentPlan, proposedResult } = dropProposal;
+        const isoLabel = new Date(iso + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+
+        const DayTimeline = ({ dayPlans, label, color }) => {
+          const plan = dayPlans?.[iso];
+          if (!plan) return <div style={{ color: 'var(--ink-faint)', fontSize: 13 }}>Journée vide</div>;
+          const poses = (plan.events || []).filter(e => e.type === 'pose');
+          return (
+            <div>
+              <div className="text-xs font-semibold mb-2" style={{ color, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</div>
+              <div className="space-y-1">
+                {poses.map((e, i) => (
+                  <div key={i} className="flex items-center gap-2 p-2 rounded" style={{ background: 'var(--cream)', fontSize: 12 }}>
+                    <span style={{ fontFamily: 'JetBrains Mono, monospace', color: 'var(--ink-soft)', minWidth: 40 }}>{minToHHMM(e.start)}</span>
+                    <span style={{ fontWeight: 600 }}>{e.chantier?.clientName || '—'}</span>
+                    <span style={{ color: 'var(--ink-faint)', marginLeft: 'auto' }}>{e.chantier?.city} · {e.chantier?.estimatedDuration}h</span>
                   </div>
-                );
-              })}
-            </div>
-            {dropProposal.proposedResult?.overflow?.some(c => c.id !== dropProposal.chantierObj.id) && (
-              <div className="text-xs p-2 rounded mb-4" style={{ background: '#FEF3C7', color: '#92400E' }}>
-                ⚠ {dropProposal.proposedResult.overflow.filter(c => c.id !== dropProposal.chantierObj.id).map(c => c.clientName).join(', ')} sera repoussé en overflow.
+                ))}
+                {poses.length === 0 && <div style={{ color: 'var(--ink-faint)', fontSize: 12 }}>Aucune pose</div>}
+                <div style={{ fontSize: 11, color: 'var(--ink-faint)', marginTop: 4 }}>
+                  fin {minToHHMM(plan.endMin)} · {fmtDuration((plan.approachSec || 0) + (plan.totalDriveSec || 0) + (plan.siegeReturnSec || 0))} route
+                </div>
               </div>
-            )}
-            <div className="flex gap-3 justify-end">
-              <button className="btn-secondary" onClick={() => setDropProposal(null)}>Annuler</button>
-              <button className="btn-primary" onClick={confirmDropProposal}>Confirmer</button>
+            </div>
+          );
+        };
+
+        return (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+            <div style={{ background: 'var(--paper)', borderRadius: 12, padding: 24, maxWidth: 640, width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.3)' }}>
+              <div className="font-display text-xl font-semibold mb-1">Ajouter {chantierObj.clientName} ?</div>
+              <div className="text-sm mb-4" style={{ color: 'var(--ink-soft)' }}>
+                {bin.name} · {isoLabel} · {chantierObj.postalCode} {chantierObj.city} · {chantierObj.estimatedDuration}h
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+                <DayTimeline dayPlans={currentPlan?.dayPlans} label="Avant" color="var(--ink-soft)" />
+                <DayTimeline dayPlans={proposedResult?.dayPlans} label="Après" color="var(--teal-deep)" />
+              </div>
+              {proposedResult?.overflow?.some(c => c.id !== chantierObj.id) && (
+                <div className="text-xs p-2 rounded mb-4" style={{ background: '#FEF3C7', color: '#92400E' }}>
+                  ⚠ {proposedResult.overflow.filter(c => c.id !== chantierObj.id).map(c => c.clientName).join(', ')} sera repoussé en overflow.
+                </div>
+              )}
+              <div className="flex gap-3 justify-end">
+                <button className="btn-secondary" onClick={() => setDropProposal(null)}>Annuler</button>
+                <button className="btn-primary" onClick={confirmDropProposal}>Confirmer</button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
@@ -4129,11 +4136,11 @@ function Parametres({ binomes, setBinomes, poseTypes, setPoseTypes, depot, setDe
           const curEdt = sGet(SK.edt, {}) || {};
           // Nettoyer les schedules importés avant fusion
           const cleanedImportEdt = {};
-          Object.entries(data.edt).forEach(([wk, wkData]) => {
+          for (const [wk, wkData] of Object.entries(data.edt)) {
             cleanedImportEdt[wk] = wkData.schedules
               ? { ...wkData, schedules: cleanSavedSchedules(wkData.schedules) }
               : wkData;
-          });
+          }
           const mergedEdt = { ...cleanedImportEdt, ...curEdt };
           sSet(SK.edt, mergedEdt);
         }
