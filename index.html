@@ -3228,55 +3228,246 @@ ${sign}`,
     setDropProposal(null);
   };
 
-  const exportPDF = async () => {
+  const exportPDF = () => {
     const { jsPDF } = window.jspdf;
-    // Récupérer toutes les sections de binôme dans la grille (une par binôme)
-    const grille = document.getElementById('planning-grille');
-    if (!grille) { showToast('Grille introuvable'); return; }
-    const sections = grille.querySelectorAll('section.print-page');
-    if (!sections.length) { showToast('Aucun planning à exporter'); return; }
+    if (!usedPools || !usedPools.length) { showToast('Aucun planning à exporter'); return; }
     showToast('Génération du PDF…');
     try {
       const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3' });
-      const pdfW = pdf.internal.pageSize.getWidth();
-      const pdfH = pdf.internal.pageSize.getHeight();
+      const PW = 420, PH = 297;
+      const ML = 8, MR = 8, MT = 8, MB = 8;
+      const HEADER_H = 16, COL_HDR_H = 7, FOOTER_H = 13, AXIS_W = 13;
+      const gridTop    = MT + HEADER_H + COL_HDR_H;
+      const gridBottom = PH - MB - FOOTER_H;
+      const gridH      = gridBottom - gridTop;
+      const gridLeft   = ML + AXIS_W;
+      const gridRight  = PW - MR;
+      const gridW      = gridRight - gridLeft;
+      const COL_W      = gridW / 6;
+      const tMin       = axisStartH * 60;
+      const tMax       = axisEndH   * 60;
+      const mmPerMin   = gridH / (tMax - tMin);
+      const minToY     = (m) => gridTop + (m - tMin) * mmPerMin;
+
+      // hex "#RRGGBB" → [r, g, b]
+      const hexRgb = (hex) => {
+        const h = (hex || '#888888').replace('#', '').padEnd(6, '0');
+        return [parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16)];
+      };
+
+      // Diagonale hachurée dans un rectangle (clipping manuel)
+      const drawHatch = (x, y, w, h) => {
+        pdf.setFillColor(240, 240, 240);
+        pdf.rect(x, y, w, h, 'F');
+        pdf.setDrawColor(165, 165, 165);
+        pdf.setLineWidth(0.18);
+        const step = 2.2;
+        const kMin = y - (x + w), kMax = (y + h) - x;
+        for (let k = Math.ceil(kMin / step) * step; k <= kMax; k += step) {
+          const pts = [];
+          const lY = x + k;       if (lY >= y && lY <= y + h) pts.push([x,     lY]);
+          const rY = (x + w) + k; if (rY >= y && rY <= y + h) pts.push([x + w, rY]);
+          const tX = y - k;       if (tX >= x && tX <= x + w) pts.push([tX,    y]);
+          const bX = (y + h) - k; if (bX >= x && bX <= x + w) pts.push([bX,    y + h]);
+          if (pts.length >= 2) pdf.line(pts[0][0], pts[0][1], pts[1][0], pts[1][1]);
+        }
+      };
+
+      // Tronque le texte à maxW mm (1ère ligne seulement)
+      const fitText = (text, maxW, size) => {
+        pdf.setFontSize(size);
+        return (pdf.splitTextToSize(String(text || ''), maxW) || [''])[0];
+      };
+
       let first = true;
-      for (const section of sections) {
-        // Masquer temporairement les chips overflow pour la capture
-        const overflowEl = section.querySelector('[data-overflow]');
-        const noprint = section.querySelectorAll('.no-print');
-        if (overflowEl) overflowEl.style.display = 'none';
-        noprint.forEach(el => el.style.display = 'none');
-        const canvas = await html2canvas(section, {
-          scale: 2,
-          useCORS: true,
-          backgroundColor: '#ffffff',
-          scrollX: 0,
-          scrollY: 0,
-          logging: false,
-        });
-        if (overflowEl) overflowEl.style.display = '';
-        noprint.forEach(el => el.style.display = '');
+
+      (usedPools || []).forEach(({ bin, pool }) => {
+        const res = schedules[bin.id];
+        if (!res || !res.dayPlans) return;
         if (!first) pdf.addPage('a3', 'landscape');
         first = false;
-        const imgData = canvas.toDataURL('image/jpeg', 0.82);
-        const ratio = canvas.width / canvas.height;
-        // Marges 8mm de chaque côté
-        const margin = 8;
-        let imgW = pdfW - margin * 2;
-        let imgH = imgW / ratio;
-        if (imgH > pdfH - margin * 2 - 8) {
-          imgH = pdfH - margin * 2 - 8;
-          imgW = imgH * ratio;
+
+        // ── EN-TÊTE ─────────────────────────────────────────────────────
+        const [br, bgc, bb] = hexRgb(bin.color);
+        pdf.setFillColor(br, bgc, bb);
+        pdf.rect(ML, MT, 3.5, HEADER_H, 'F');
+
+        pdf.setFont('helvetica', 'bold'); pdf.setFontSize(13); pdf.setTextColor(25, 25, 25);
+        pdf.text(bin.name || '', ML + 6.5, MT + 7);
+
+        if (bin.members && bin.members.length) {
+          pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8); pdf.setTextColor(110, 110, 110);
+          pdf.text(bin.members.join(' · '), ML + 6.5, MT + 12.5);
         }
-        pdf.setFontSize(7);
-        pdf.setTextColor(160);
-        pdf.text('JM Bâches — ' + weekLabel, margin, margin - 2);
-        pdf.addImage(imgData, 'PNG', margin, margin + 2, imgW, imgH);
-      }
+
+        pdf.setFont('helvetica', 'bold'); pdf.setFontSize(10); pdf.setTextColor(50, 50, 50);
+        pdf.text(weekLabel, PW / 2, MT + 9, { align: 'center' });
+
+        pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7.5); pdf.setTextColor(160, 160, 160);
+        pdf.text('JM Baches', PW - MR, MT + 7, { align: 'right' });
+
+        // ── EN-TÊTES COLONNES ────────────────────────────────────────────
+        const DAY_NAMES = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'];
+        days.forEach((d, di) => {
+          const cx = gridLeft + di * COL_W + COL_W / 2;
+          pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8); pdf.setTextColor(55, 55, 55);
+          pdf.text(
+            DAY_NAMES[di] + ' ' + d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }),
+            cx, gridTop - 1.5, { align: 'center' }
+          );
+        });
+
+        // ── GRILLE ───────────────────────────────────────────────────────
+        pdf.setFillColor(252, 252, 252);
+        pdf.rect(gridLeft, gridTop, gridW, gridH, 'F');
+
+        // Lignes d'heures + labels axe
+        for (let h = axisStartH; h <= axisEndH; h++) {
+          const gy = minToY(h * 60);
+          if (gy < gridTop - 0.1 || gy > gridBottom + 0.1) continue;
+          pdf.setDrawColor(212, 212, 212); pdf.setLineWidth(0.15); pdf.setLineDashPattern([], 0);
+          pdf.line(gridLeft, gy, gridRight, gy);
+          pdf.setFont('helvetica', 'normal'); pdf.setFontSize(6.5); pdf.setTextColor(165, 165, 165);
+          pdf.text(h + 'h', gridLeft - 1.5, gy + 1.2, { align: 'right' });
+        }
+
+        // Plafond 18h (tirets rouges)
+        const y18 = minToY(18 * 60);
+        if (y18 >= gridTop && y18 <= gridBottom) {
+          pdf.setDrawColor(190, 60, 60); pdf.setLineWidth(0.3);
+          pdf.setLineDashPattern([1.2, 0.8], 0);
+          pdf.line(gridLeft, y18, gridRight, y18);
+          pdf.setLineDashPattern([], 0);
+        }
+
+        // Séparateurs colonnes
+        pdf.setDrawColor(200, 200, 200); pdf.setLineWidth(0.15);
+        for (let di = 1; di < 6; di++) {
+          pdf.line(gridLeft + di * COL_W, gridTop, gridLeft + di * COL_W, gridBottom);
+        }
+        pdf.setDrawColor(155, 155, 155); pdf.setLineWidth(0.4);
+        pdf.rect(gridLeft, gridTop, gridW, gridH, 'D');
+
+        // ── ÉVÉNEMENTS ──────────────────────────────────────────────────
+        days.forEach((d, di) => {
+          const iso = toISO(d);
+          const plan = res.dayPlans[iso];
+          if (!plan) return;
+          const colX = gridLeft + di * COL_W;
+          const PAD = 0.5;
+
+          plan.events.forEach((ev, ei) => {
+            const y1  = minToY(Math.max(ev.start, tMin));
+            const y2  = minToY(Math.min(ev.end,   tMax));
+            const evH = Math.max(y2 - y1, 1.0);
+            if (y1 > gridBottom + 0.5 || y2 < gridTop - 0.5) return;
+
+            if (ev.type === 'travel' || ev.type === 'travelApproach' || ev.type === 'travelEvening') {
+              drawHatch(colX + PAD, y1, COL_W - PAD * 2, evH);
+              if (evH >= 4.5) {
+                const dur      = fmtDuration(Math.round(ev.end - ev.start) * 60);
+                const nextPose = plan.events.slice(ei + 1).find(e => e.type === 'pose' && e.chantier);
+                const dest     = nextPose && nextPose.chantier && nextPose.chantier.city;
+                pdf.setFont('helvetica', 'normal'); pdf.setFontSize(6); pdf.setTextColor(88, 88, 88);
+                pdf.text(
+                  fitText(dest ? dur + ' > ' + dest : dur, COL_W - 2, 6),
+                  colX + COL_W / 2, y1 + evH / 2 + 1.8, { align: 'center' }
+                );
+              }
+            } else if (ev.type === 'lunch') {
+              pdf.setFillColor(250, 247, 235);
+              pdf.rect(colX + PAD, y1, COL_W - PAD * 2, evH, 'F');
+              pdf.setDrawColor(200, 190, 155); pdf.setLineWidth(0.15);
+              pdf.setLineDashPattern([0.8, 0.8], 0);
+              pdf.rect(colX + PAD, y1, COL_W - PAD * 2, evH, 'D');
+              pdf.setLineDashPattern([], 0);
+              if (evH >= 4.5) {
+                pdf.setFont('helvetica', 'normal'); pdf.setFontSize(6); pdf.setTextColor(140, 125, 90);
+                pdf.text('Dejeuner', colX + COL_W / 2, y1 + evH / 2 + 1.8, { align: 'center' });
+              }
+            } else if (ev.type === 'pose' && ev.chantier) {
+              const c     = ev.chantier;
+              const pType = (poseTypes || []).find(p => p.name === c.type);
+              const dc    = typeColor(c.type, pType && pType.color);
+              const [fbr, fbg, fbb] = hexRgb(dc.bg);
+              const [fir, fig, fib] = hexRgb(dc.ink);
+              const [bcr, bcg, bcb] = hexRgb(bin.color);
+
+              pdf.setFillColor(fbr, fbg, fbb);
+              pdf.rect(colX + PAD, y1, COL_W - PAD * 2, evH, 'F');
+              pdf.setFillColor(bcr, bcg, bcb);
+              pdf.rect(colX + PAD, y1, 2, evH, 'F');
+
+              pdf.setTextColor(fir, fig, fib);
+              const tx = colX + PAD + 2.8, tw = COL_W - PAD * 2 - 3;
+              let ty = y1 + 3.2;
+
+              pdf.setFont('helvetica', 'bold'); pdf.setFontSize(6.5);
+              pdf.text(fitText(minToHHMM(ev.start) + ' ' + (c.clientName || ''), tw, 6.5), tx, ty);
+
+              if (evH > 7.5 && c.type) {
+                ty += 3.2;
+                pdf.setFont('helvetica', 'normal'); pdf.setFontSize(5.8);
+                pdf.text(fitText(c.type, tw, 5.8), tx, ty);
+              }
+              if (evH > 13 && (c.postalCode || c.city)) {
+                ty += 3;
+                pdf.setFont('helvetica', 'bold'); pdf.setFontSize(5.8);
+                pdf.text(fitText([c.postalCode, c.city].filter(Boolean).join(' '), tw, 5.8), tx, ty);
+              }
+              if (evH > 20 && c.estimatedDuration) {
+                ty += 2.8;
+                pdf.setFont('helvetica', 'normal'); pdf.setFontSize(5.5);
+                pdf.text(c.estimatedDuration + 'h', tx, ty);
+              }
+            }
+          });
+        });
+
+        // ── PIED DE PAGE ─────────────────────────────────────────────────
+        pdf.setDrawColor(200, 200, 200); pdf.setLineWidth(0.3);
+        pdf.line(ML, gridBottom, PW - MR, gridBottom);
+        const fY = gridBottom + 1;
+
+        days.forEach((d, di) => {
+          const iso  = toISO(d);
+          const plan = res.dayPlans && res.dayPlans[iso];
+          const cx   = gridLeft + di * COL_W + COL_W / 2;
+
+          if (!plan) {
+            pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7); pdf.setTextColor(190, 190, 190);
+            pdf.text('—', cx, fY + 4, { align: 'center' });
+            return;
+          }
+          if (plan.returnOnly) {
+            pdf.setFont('helvetica', 'normal'); pdf.setFontSize(6.5); pdf.setTextColor(100, 100, 100);
+            pdf.text('retour depot', cx, fY + 3.5, { align: 'center' });
+            pdf.text(fmtDuration(plan.approachSec || 0), cx, fY + 7, { align: 'center' });
+            return;
+          }
+
+          pdf.setFont('helvetica', 'bold'); pdf.setFontSize(7);
+          pdf.setTextColor(plan.oversized ? 170 : 45, plan.oversized ? 55 : 45, plan.oversized ? 45 : 45);
+          pdf.text('fin ' + minToHHMM(plan.endMin) + (plan.oversized ? ' !' : ''), cx, fY + 3.5, { align: 'center' });
+
+          const driveTotal = (plan.approachSec || 0) + (plan.totalDriveSec || 0) + (plan.siegeReturnSec || 0);
+          pdf.setFont('helvetica', 'normal'); pdf.setFontSize(6.5); pdf.setTextColor(100, 100, 100);
+          pdf.text(fmtDuration(driveTotal) + ' route', cx, fY + 7, { align: 'center' });
+
+          if (!plan.isLastPoseDay && plan.staysOnSite) {
+            pdf.setFont('helvetica', 'bold'); pdf.setFontSize(6); pdf.setTextColor(100, 80, 30);
+            pdf.text('nuit sur place', cx, fY + 10.5, { align: 'center' });
+          } else if (!plan.isLastPoseDay && plan.siegeReturnSec > 0) {
+            pdf.setFont('helvetica', 'normal'); pdf.setFontSize(6); pdf.setTextColor(30, 110, 80);
+            pdf.text('retour siege', cx, fY + 10.5, { align: 'center' });
+          }
+        });
+      });
+
       pdf.save('planning_' + weekKey + '.pdf');
-      showToast('PDF exporté (' + sections.length + ' page' + (sections.length > 1 ? 's' : '') + ')');
-    } catch(e) { showToast('Erreur PDF : ' + e.message); }
+      const n = (usedPools || []).filter(({ bin }) => schedules[bin.id]).length;
+      showToast('PDF exporte (' + n + ' page' + (n > 1 ? 's' : '') + ')');
+    } catch(e) { showToast('Erreur PDF : ' + e.message); console.error('[exportPDF]', e); }
   };
 
   const clearSaved = () => {
