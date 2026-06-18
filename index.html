@@ -3244,19 +3244,37 @@ ${sign}`,
       for (const section of sections) {
         // Masquer temporairement les chips overflow pour la capture
         const overflowEl = section.querySelector('[data-overflow]');
+        const noprint = section.querySelectorAll('.no-print');
         if (overflowEl) overflowEl.style.display = 'none';
-        const canvas = await html2canvas(section, { scale: 2, useCORS: true, backgroundColor: '#ffffff', scrollX: 0, scrollY: 0, windowWidth: section.scrollWidth, width: section.scrollWidth });
+        noprint.forEach(el => el.style.display = 'none');
+        const canvas = await html2canvas(section, {
+          scale: 3,
+          useCORS: true,
+          backgroundColor: '#ffffff',
+          scrollX: 0,
+          scrollY: 0,
+          windowWidth: section.scrollWidth,
+          width: section.scrollWidth,
+          logging: false,
+        });
         if (overflowEl) overflowEl.style.display = '';
+        noprint.forEach(el => el.style.display = '');
         if (!first) pdf.addPage('a3', 'landscape');
         first = false;
         const imgData = canvas.toDataURL('image/png');
         const ratio = canvas.width / canvas.height;
-        let imgW = pdfW - 10, imgH = imgW / ratio;
-        if (imgH > pdfH - 10) { imgH = pdfH - 10; imgW = imgH * ratio; }
-        pdf.setFontSize(8);
-        pdf.setTextColor(150);
-        pdf.text('JM Bâches — ' + weekLabel, 5, 5);
-        pdf.addImage(imgData, 'PNG', 5, 8, imgW, imgH);
+        // Marges 8mm de chaque côté
+        const margin = 8;
+        let imgW = pdfW - margin * 2;
+        let imgH = imgW / ratio;
+        if (imgH > pdfH - margin * 2 - 8) {
+          imgH = pdfH - margin * 2 - 8;
+          imgW = imgH * ratio;
+        }
+        pdf.setFontSize(7);
+        pdf.setTextColor(160);
+        pdf.text('JM Bâches — ' + weekLabel, margin, margin - 2);
+        pdf.addImage(imgData, 'PNG', margin, margin + 2, imgW, imgH);
       }
       pdf.save('planning_' + weekKey + '.pdf');
       showToast('PDF exporté (' + sections.length + ' page' + (sections.length > 1 ? 's' : '') + ')');
