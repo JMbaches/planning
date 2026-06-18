@@ -3126,7 +3126,15 @@ ${sign}`,
   const confirmDropProposal = () => {
     if (!dropProposal) return;
     const { updated, binId, proposedResult } = dropProposal;
+    // Appliquer le nouveau chantier droppé
     upsert(updated);
+    // Déprogrammer les chantiers poussés en overflow par le recalcul
+    (proposedResult.overflow || []).forEach(c => {
+      const existing = chantiers.find(x => x.id === c.id);
+      if (existing && existing.scheduledBinome === binId && existing.status !== 'valide' && existing.status !== 'fait') {
+        upsert({ ...existing, scheduledDate: '', scheduledBinome: '', status: 'a_planifier' });
+      }
+    });
     setSchedules(prev => ({ ...prev, [binId]: proposedResult }));
     setDropProposal(null);
   };
