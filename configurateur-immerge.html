@@ -1,0 +1,1690 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Configurateur Volets Immergés — JM Bâches</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --navy:    #162D5E;
+  --navy-d:  #0F1F42;
+  --navy-l:  #1E3A73;
+  --blue:    #2563EB;
+  --blue-l:  #EFF6FF;
+  --border:  #E2E8F0;
+  --bg:      #EDF1F7;
+  --surface: #F8FAFC;
+  --text:    #0F172A;
+  --text-2:  #475569;
+  --muted:   #94A3B8;
+  --green:   #059669;
+  --red:     #DC2626;
+  --shadow-sm: 0 1px 3px rgba(15,23,42,.06), 0 1px 2px rgba(15,23,42,.04);
+  --shadow:    0 4px 16px rgba(15,23,42,.08), 0 1px 4px rgba(15,23,42,.04);
+  --shadow-lg: 0 8px 32px rgba(15,23,42,.14);
+  --r: 12px;
+  --r-sm: 8px;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ══ HEADER ══════════════════════════════ */
+header {
+  background: linear-gradient(110deg, var(--navy-d) 0%, var(--navy-l) 100%);
+  color: #fff;
+  padding: 0 28px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  position: sticky;
+  top: 0;
+  z-index: 200;
+  box-shadow: 0 2px 14px rgba(0,0,0,.35);
+}
+.logo {
+  background: #fff;
+  color: var(--navy);
+  font-weight: 900;
+  font-size: 13px;
+  width: 40px; height: 40px;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(0,0,0,.2), inset 0 1px 0 rgba(255,255,255,.6);
+}
+header h1 { font-size: 16px; font-weight: 700; letter-spacing: .01em; }
+header p  { font-size: 11.5px; color: rgba(255,255,255,.48); margin-top: 2px; font-weight: 400; }
+
+/* ══ TAB BAR ══════════════════════════════ */
+.tab-bar {
+  background: var(--navy-d);
+  display: flex;
+  gap: 6px;
+  padding: 10px 28px;
+  position: sticky;
+  top: 64px;
+  z-index: 190;
+  box-shadow: 0 2px 8px rgba(0,0,0,.28);
+  border-bottom: 1px solid rgba(255,255,255,.05);
+}
+.tab-btn {
+  background: rgba(255,255,255,.07);
+  color: rgba(255,255,255,.55);
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 20px;
+  padding: 7px 22px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all .18s ease;
+  letter-spacing: .03em;
+  font-family: inherit;
+}
+.tab-btn:hover { background: rgba(255,255,255,.14); color: rgba(255,255,255,.9); }
+.tab-btn.active {
+  background: #fff;
+  color: var(--navy);
+  border-color: transparent;
+  box-shadow: 0 2px 10px rgba(0,0,0,.22);
+}
+
+/* ══ LAYOUT ══════════════════════════════ */
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 388px;
+  gap: 24px;
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 24px;
+  align-items: start;
+}
+
+/* ══ CARDS ══════════════════════════════ */
+.card {
+  background: #fff;
+  border-radius: var(--r);
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(226,232,240,.7);
+  transition: box-shadow .2s ease, transform .2s ease;
+}
+.card:focus-within { box-shadow: var(--shadow); }
+
+.card-head {
+  background: linear-gradient(95deg, var(--navy) 0%, var(--navy-l) 100%);
+  color: #fff;
+  padding: 11px 18px;
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.step-badge {
+  background: rgba(255,255,255,.22);
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.card-body { padding: 16px 18px; }
+
+/* ══ FORM INPUTS ══════════════════════════ */
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+.fg { display: flex; flex-direction: column; gap: 5px; }
+.fg label {
+  font-size: 10.5px; font-weight: 700;
+  color: var(--text-2);
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.input-wrap { position: relative; }
+.input-wrap input { padding-right: 38px; }
+.unit {
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  font-size: 12px; color: var(--muted); pointer-events: none; font-weight: 600;
+}
+input[type=number], input[type=text], select {
+  width: 100%;
+  border: 1.5px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--surface);
+  transition: border-color .15s, box-shadow .15s, background .15s;
+  font-family: inherit;
+}
+input[type=number]:focus, input[type=text]:focus, select:focus {
+  outline: none;
+  border-color: var(--blue);
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+}
+
+/* ══ CHOICE CARDS ══════════════════════════ */
+.choices { display: flex; flex-direction: column; gap: 7px; }
+.choices.row { flex-direction: row; flex-wrap: wrap; }
+
+.choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 13px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: border-color .15s, background .15s, box-shadow .15s;
+  background: #fff;
+  flex: 1;
+  min-width: 140px;
+  user-select: none;
+  position: relative;
+  overflow: hidden;
+}
+.choice::after {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: transparent;
+  transition: background .15s;
+  border-radius: 3px 0 0 3px;
+}
+.choice:hover { border-color: #93C5FD; background: #F8FBFF; box-shadow: 0 2px 8px rgba(37,99,235,.08); }
+.choice:hover::after { background: #93C5FD; }
+.choice.sel {
+  border-color: var(--blue);
+  background: linear-gradient(135deg, #F0F7FF 0%, #EBF4FF 100%);
+  box-shadow: 0 2px 10px rgba(37,99,235,.1);
+}
+.choice.sel::after { background: var(--blue); }
+.choice.incompat { opacity: .55; border-color: #FCA5A5; background: #FFF8F8; cursor: not-allowed; }
+.choice input[type=radio],
+.choice input[type=checkbox] {
+  width: auto; flex-shrink: 0; margin-top: 2px;
+  accent-color: var(--blue);
+}
+.ch-title { font-size: 13px; font-weight: 600; line-height: 1.35; color: var(--text); }
+.ch-ref   { font-size: 10px; color: var(--muted); font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace; margin-top: 2px; letter-spacing: .04em; }
+.ch-price { font-size: 13px; font-weight: 700; color: var(--blue); margin-top: 5px; }
+.ch-badge { font-size: 10px; background: #D1FAE5; color: #065F46; padding: 2px 8px; border-radius: 20px; font-weight: 700; letter-spacing: .02em; }
+
+/* ══ SUB-SECTIONS ══════════════════════════ */
+.sub {
+  background: var(--surface);
+  border-radius: var(--r-sm);
+  padding: 14px;
+  margin-top: 10px;
+  border: 1px solid var(--border);
+}
+.sub-title {
+  font-size: 10.5px; font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase; letter-spacing: .08em;
+  margin-bottom: 10px;
+  display: flex; align-items: center; gap: 6px;
+}
+.opt-section { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+
+/* ══ ALERTS ══════════════════════════════ */
+.alert {
+  border-radius: var(--r-sm);
+  padding: 9px 13px;
+  font-size: 12px;
+  margin-top: 10px;
+  line-height: 1.5;
+}
+.alert-warn { background: #FFFBEB; border: 1px solid #FDE68A; color: #78350F; }
+.alert-info { background: #EFF6FF; border: 1px solid #BFDBFE; color: #1E40AF; }
+.alert-err  { background: #FFF1F2; border: 1px solid #FECDD3; color: #9F1239; font-weight: 500; }
+
+/* ══ PRICE PANEL ══════════════════════════ */
+.price-panel { position: sticky; top: 124px; }
+
+.price-card {
+  background: #fff;
+  border-radius: var(--r);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  border: 1px solid rgba(226,232,240,.5);
+}
+.price-head {
+  background: linear-gradient(110deg, var(--navy-d) 0%, var(--navy-l) 100%);
+  color: #fff;
+  padding: 14px 18px;
+  font-weight: 800;
+  font-size: 11px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  display: flex; align-items: center; gap: 10px;
+}
+.price-head-icon {
+  background: rgba(255,255,255,.15);
+  width: 28px; height: 28px;
+  border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px;
+}
+.price-lines {
+  padding: 12px 18px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+.price-lines::-webkit-scrollbar { width: 4px; }
+.price-lines::-webkit-scrollbar-track { background: transparent; }
+.price-lines::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+.price-empty {
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 40px 16px;
+  font-weight: 500;
+}
+
+.pline {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #F1F5F9;
+}
+.pline:last-child { border-bottom: none; }
+.pline-left { flex: 1; min-width: 0; }
+.pline-name { font-size: 12.5px; color: var(--text); line-height: 1.35; font-weight: 500; }
+.pline-ref  { font-size: 10px; color: var(--muted); font-family: ui-monospace, monospace; margin-top: 1px; }
+.pline-amt  { font-size: 13px; font-weight: 700; color: var(--text); white-space: nowrap; }
+.pline-devis { font-size: 11px; color: var(--muted); font-style: italic; }
+
+.price-footer {
+  padding: 14px 18px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.pf-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 5px 0; font-size: 13px; color: var(--text-2);
+}
+.pf-row.ht {
+  font-size: 15px; font-weight: 700; color: var(--navy);
+  border-top: 1.5px solid var(--border);
+  padding-top: 10px; margin-top: 6px;
+}
+.pf-row.ttc {
+  font-size: 18px; font-weight: 800; color: var(--navy);
+  background: linear-gradient(135deg, var(--blue-l) 0%, #E0EEFF 100%);
+  border: 1.5px solid #BFDBFE;
+  border-radius: 9px;
+  padding: 11px 14px;
+  margin-top: 10px;
+}
+.pf-muted { color: var(--muted); }
+
+.remise-wrap {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 0;
+  border-top: 1px dashed var(--border);
+  margin-top: 4px;
+}
+.remise-wrap label { font-size: 13px; flex: 1; color: var(--text-2); font-weight: 500; }
+.remise-wrap .ri { display: flex; align-items: center; gap: 4px; }
+.remise-wrap .ri input {
+  width: 64px;
+  border: 1.5px solid var(--border);
+  border-radius: 7px;
+  padding: 6px 8px;
+  font-size: 13px;
+  text-align: right;
+  background: #fff;
+  font-family: inherit;
+}
+.remise-wrap .ri input:focus {
+  outline: none; border-color: var(--blue);
+  box-shadow: 0 0 0 2px rgba(37,99,235,.12);
+}
+.remise-sign { font-size: 13px; color: var(--red); font-weight: 700; min-width: 84px; text-align: right; }
+
+.btn-print {
+  width: 100%;
+  margin-top: 14px;
+  padding: 12px;
+  background: var(--navy);
+  color: #fff;
+  border: none;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: .04em;
+  transition: all .2s ease;
+  font-family: inherit;
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+}
+.btn-print:hover { background: var(--navy-l); box-shadow: 0 4px 14px rgba(22,45,94,.32); transform: translateY(-1px); }
+.btn-print:active { transform: none; box-shadow: none; }
+
+/* ══ PRINT ══════════════════════════════ */
+@media print {
+  body { background: #fff; }
+  header, .tab-bar, .form-panel { display: none !important; }
+  .layout { display: block; padding: 0; }
+  .price-panel { position: static; }
+  .price-card { box-shadow: none; border: 1px solid #ccc; }
+  .price-lines { max-height: none; overflow: visible; }
+  .btn-print { display: none; }
+}
+
+@media (max-width: 860px) {
+  .layout { grid-template-columns: 1fr; }
+  .price-panel { position: static; }
+  .tab-bar { top: 64px; }
+}
+</style>
+<style id="embed-style">
+  /* Masque le header propre quand l'appli tourne dans la coquille parent (?embedded=1) */
+  body.embedded > header { display: none !important; }
+  body.embedded > .tab-bar { top: 0 !important; }
+</style>
+<script>
+  if (new URLSearchParams(location.search).get('embedded') === '1') {
+    document.documentElement.classList.add('embedded-html');
+    document.addEventListener('DOMContentLoaded', () => document.body.classList.add('embedded'));
+  }
+</script>
+</head>
+<body>
+
+<header>
+  <div class="logo">JM</div>
+  <div>
+    <h1>JM BÂCHES — Configurateur Volets Immergés</h1>
+    <p>Master Immergé · Master Intégré · Calcul automatique de prix</p>
+  </div>
+</header>
+
+<div class="tab-bar">
+  <button class="tab-btn active" data-tab="immerge" onclick="switchTab('immerge')">Volet Immergé</button>
+  <button class="tab-btn" data-tab="integre" onclick="switchTab('integre')">Volet Intégré</button>
+</div>
+
+<div class="layout">
+<div class="form-panel">
+
+<!-- ══════════════════════════════════════════
+     FORMULAIRE VOLET IMMERGÉ
+══════════════════════════════════════════ -->
+<div id="form-immerge">
+
+  <!-- 1. DIMENSIONS -->
+  <div class="card">
+    <div class="card-head"><span class="step-badge">1</span> Dimensions du bassin</div>
+    <div class="card-body">
+      <div class="form-row">
+        <div class="fg">
+          <label>AC — Longueur du bassin</label>
+          <div class="input-wrap">
+            <input type="number" id="im-ac" min="0.5" max="14" step="0.01" placeholder="ex : 8.00">
+            <span class="unit">m</span>
+          </div>
+        </div>
+        <div class="fg">
+          <label>AB — Largeur du bassin</label>
+          <div class="input-wrap">
+            <input type="number" id="im-ab" min="0.5" max="6" step="0.01" placeholder="ex : 4.00">
+            <span class="unit">m</span>
+          </div>
+        </div>
+      </div>
+      <div class="alert alert-info" style="font-size:11px;">Dimensions max : 6m × 14m · Superficie max : 84m²</div>
+      <div id="im-dim-alert" style="display:none;"></div>
+    </div>
+  </div>
+
+  <!-- 2. MOTEUR / STRUCTURE -->
+  <div class="card">
+    <div class="card-head"><span class="step-badge">2</span> Moteur / Structure</div>
+    <div class="card-body">
+      <div class="choices" id="im-struct-choices"><!-- JS --></div>
+      <div id="im-struct-alert" style="display:none;"></div>
+    </div>
+  </div>
+
+  <!-- 3. MUR -->
+  <div class="card">
+    <div class="card-head"><span class="step-badge">3</span> Mur (glissières + lames PVC)</div>
+    <div class="card-body">
+      <div class="sub-title">Hauteur du mur</div>
+      <div class="choices row">
+        <label class="choice sel" id="im-ch-mur1000">
+          <input type="radio" name="im-mur" value="1000" checked>
+          <div>
+            <div class="ch-title">1 000 mm</div>
+            <div class="ch-ref">MU14 / MU15 / MU16</div>
+            <div style="font-size:10px;color:var(--muted);margin-top:2px;">≤5m : 1 059,08 € · &gt;5m : 1 491,23 €</div>
+            <div class="ch-price" id="im-p-mur1000">—</div>
+          </div>
+        </label>
+        <label class="choice" id="im-ch-mur1250">
+          <input type="radio" name="im-mur" value="1250">
+          <div>
+            <div class="ch-title">1 250 mm</div>
+            <div class="ch-ref">MU1254 / MU1255 / MU1256</div>
+            <div style="font-size:10px;color:var(--muted);margin-top:2px;">≤5m : 1 221,66 € · &gt;5m : 1 668,96 €</div>
+            <div class="ch-price" id="im-p-mur1250">—</div>
+          </div>
+        </label>
+        <label class="choice" id="im-ch-mur1500">
+          <input type="radio" name="im-mur" value="1500">
+          <div>
+            <div class="ch-title">1 500 mm</div>
+            <div class="ch-ref">MU1504 / MU1505 / MU1506</div>
+            <div style="font-size:10px;color:var(--muted);margin-top:2px;">≤5m : 1 399,77 € · &gt;5m : 2 098,48 €</div>
+            <div class="ch-price" id="im-p-mur1500">—</div>
+          </div>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. POSE -->
+  <div class="card">
+    <div class="card-head"><span class="step-badge">4</span> Pose</div>
+    <div class="card-body">
+      <div class="choices row">
+        <label class="choice sel" id="im-ch-facade">
+          <input type="radio" name="im-pose" value="facade" checked>
+          <div>
+            <div class="ch-title">Pose sur façade</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px;">Fixation sur la paroi verticale du bassin</div>
+          </div>
+        </label>
+        <label class="choice" id="im-ch-arase">
+          <input type="radio" name="im-pose" value="arase">
+          <div>
+            <div class="ch-title">Pose sur arase</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px;">Fixation en haut du rebord — équerres obligatoires</div>
+          </div>
+        </label>
+      </div>
+
+      <div id="im-equerre-wrap" style="display:none;" class="sub">
+        <div class="sub-title">Équerres — pose sur arase (cumulables)</div>
+        <div class="choices" id="im-eq-choices">
+          <label class="choice">
+            <input type="checkbox" name="im-equerre" id="im-cb-eq-poutr" value="ACVREQUPOUTR">
+            <div>
+              <div class="ch-title">Équerres ×2 — support poutre + mur</div>
+              <div class="ch-ref">ACVREQUPOUTR</div>
+              <div class="ch-price">+ 535,80 €</div>
+            </div>
+          </label>
+          <label class="choice">
+            <input type="checkbox" name="im-equerre" id="im-cb-eq-flasq" value="ACVREQUFLASQ">
+            <div>
+              <div class="ch-title">Équerres ×4 — pour flasques</div>
+              <div class="ch-ref">ACVREQUFLASQ</div>
+              <div class="ch-price">+ 693,50 €</div>
+            </div>
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. OPTIONS -->
+  <div class="card">
+    <div class="card-head"><span class="step-badge">5</span> Options</div>
+    <div class="card-body">
+
+      <div class="sub-title">
+        Équerre anti-flexion poutre
+        <span id="im-antiflex-badge" style="display:none;font-size:10px;background:#FEF3C7;color:#92400E;padding:1px 6px;border-radius:10px;font-weight:600;margin-left:6px;">Vivement conseillé &gt;4m</span>
+      </div>
+      <label class="choice" id="im-ch-antiflex">
+        <input type="checkbox" id="im-cb-antiflex">
+        <div>
+          <div class="ch-title">Équerre de renfort poutre anti-flexion</div>
+          <div class="ch-ref">ACVREQUTELESC</div>
+          <div style="font-size:11px;color:#92400E;margin-top:2px;">Volet non garanti sans équerre de renfort — bassin &gt;5m de large</div>
+          <div class="ch-price">+ 540,00 €</div>
+        </div>
+      </label>
+
+      <div class="opt-section">
+        <div class="sub-title">Poutre aluminium ≤ 6ml</div>
+        <label class="choice" id="im-ch-poutre">
+          <input type="checkbox" id="im-cb-poutre">
+          <div>
+            <div class="ch-title">Poutre aluminium + cornières 40×40×3mm</div>
+            <div class="ch-ref">ACVRPOUTR</div>
+            <div class="ch-price">+ 361,45 €</div>
+          </div>
+        </label>
+      </div>
+
+      <div class="opt-section">
+        <div class="sub-title">Cornière support caillebotis</div>
+        <label class="choice" id="im-ch-corn">
+          <input type="checkbox" id="im-cb-corn">
+          <div>
+            <div class="ch-title">Cornière support caillebotis 60×60mm — ép. 4mm</div>
+            <div class="ch-ref">ACVRCORN</div>
+            <div class="ch-price">+ 265,90 €</div>
+          </div>
+        </label>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 6. CAILLEBOTIS -->
+  <div class="card">
+    <div class="card-head"><span class="step-badge">6</span> Caillebotis</div>
+    <div class="card-body">
+      <div class="choices row" style="margin-bottom:10px;">
+        <label class="choice sel" id="im-ch-caill-non">
+          <input type="radio" name="im-caill-yn" value="non" checked>
+          <div><div class="ch-title">Non</div></div>
+        </label>
+        <label class="choice" id="im-ch-caill-oui">
+          <input type="radio" name="im-caill-yn" value="oui">
+          <div><div class="ch-title">Oui</div></div>
+        </label>
+      </div>
+      <div id="im-caill-opts" style="display:none;">
+        <div class="sub-title">Matière</div>
+        <div class="choices row" style="margin-bottom:10px;">
+          <label class="choice" id="im-ch-caill-pvc">
+            <input type="radio" name="im-caill-mat" value="pvc">
+            <div>
+              <div class="ch-title">PVC</div>
+              <div class="ch-ref">Blanc · Sable · Gris</div>
+            </div>
+          </label>
+          <label class="choice" id="im-ch-caill-rob">
+            <input type="radio" name="im-caill-mat" value="robinier">
+            <div><div class="ch-title">Bois Robinier</div></div>
+          </label>
+          <label class="choice" id="im-ch-caill-ipe">
+            <input type="radio" name="im-caill-mat" value="ipe">
+            <div><div class="ch-title">Bois IPE</div></div>
+          </label>
+        </div>
+        <div id="im-caill-larg-wrap" style="display:none;">
+          <div class="sub-title">Largeur</div>
+          <div class="choices row">
+            <label class="choice" id="im-ch-caill-70">
+              <input type="radio" name="im-caill-larg" value="70">
+              <div>
+                <div class="ch-title">70 cm</div>
+                <div class="ch-price" id="im-p-caill-70">—</div>
+              </div>
+            </label>
+            <label class="choice" id="im-ch-caill-90">
+              <input type="radio" name="im-caill-larg" value="90">
+              <div>
+                <div class="ch-title">90 cm</div>
+                <div class="ch-price" id="im-p-caill-90">—</div>
+              </div>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 7. TRANSPORT -->
+  <div class="card">
+    <div class="card-head"><span class="step-badge">7</span> Transport</div>
+    <div class="card-body">
+      <div class="choices">
+        <label class="choice sel" id="im-ch-trsp-none">
+          <input type="radio" name="im-transport" value="none" checked>
+          <div>
+            <div class="ch-title">Sans livraison / Enlèvement sur place</div>
+            <div class="ch-price">—</div>
+          </div>
+        </label>
+        <label class="choice" id="im-ch-trsp-seul">
+          <input type="radio" name="im-transport" value="seul">
+          <div>
+            <div class="ch-title">Transport seul (livraison France)</div>
+            <div class="ch-ref">Prix selon zone et largeur bassin</div>
+          </div>
+        </label>
+        <label class="choice" id="im-ch-trsp-install">
+          <input type="radio" name="im-transport" value="install">
+          <div>
+            <div class="ch-title">Transport + Installation</div>
+            <div class="ch-ref">Prix selon département</div>
+          </div>
+        </label>
+      </div>
+
+      <div id="im-trsp-seul-wrap" style="display:none;" class="sub">
+        <div class="sub-title">Zone de livraison</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <div class="fg" style="max-width:140px;">
+            <label>N° département (auto-détection)</label>
+            <input type="number" id="im-inp-dept-zone" min="1" max="95" step="1" placeholder="ex : 26">
+          </div>
+          <div id="im-zone-detected" style="font-size:12px;color:var(--muted);margin-top:16px;"></div>
+        </div>
+        <div class="choices" id="im-trsp-zone-choices">
+          <label class="choice sel">
+            <input type="radio" name="im-trsp-zone" value="std" checked>
+            <div style="flex:1;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;">
+                <div class="ch-title">France standard</div>
+                <span class="ch-price" id="im-p-trsp-std">—</span>
+              </div>
+              <div class="ch-ref">TRSPVR5 / TRSPVR6</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:3px;">Dép. 01 07 26 38 42 43 63 69</div>
+            </div>
+          </label>
+          <label class="choice">
+            <input type="radio" name="im-trsp-zone" value="SE">
+            <div style="flex:1;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;">
+                <div class="ch-title">Sud-Est</div>
+                <span class="ch-price" id="im-p-trsp-SE">—</span>
+              </div>
+              <div class="ch-ref">TRSPVR5SE / TRSPVR6SE</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:3px;">Dép. 04 05 06 11 12 13 30 34 48 66 73 74 83 84</div>
+            </div>
+          </label>
+          <label class="choice">
+            <input type="radio" name="im-trsp-zone" value="SO">
+            <div style="flex:1;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;">
+                <div class="ch-title">Sud-Ouest</div>
+                <span class="ch-price" id="im-p-trsp-SO">—</span>
+              </div>
+              <div class="ch-ref">TRSPVR5SO / TRSPVR6SO</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:3px;">Dép. 09 15 16 17 19 23 24 31 32 33 36 37 40 41 44 46 47 49 64 65 72 79 81 82 85 86 87</div>
+            </div>
+          </label>
+          <label class="choice">
+            <input type="radio" name="im-trsp-zone" value="N">
+            <div style="flex:1;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;">
+                <div class="ch-title">Nord / Ouest</div>
+                <span class="ch-price" id="im-p-trsp-N">—</span>
+              </div>
+              <div class="ch-ref">TRSPVR5N / TRSPVR6N</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:3px;">Dép. 02 03 08 10 14 18 21 22 25 27 28 29 35 39 45 50 51 52 53 54 55 56 57 58 59 60 61 62 67 68 70 71 75 76 77 78 80 88 89 90 91 92 93 94 95</div>
+            </div>
+          </label>
+        </div>
+        <div class="alert alert-info" style="margin-top:8px;">🏝 <strong>Corse (2A, 2B)</strong> — transport sur devis (TRSPVRAFFRET)</div>
+      </div>
+
+      <div id="im-trsp-install-wrap" style="display:none;" class="sub">
+        <div class="sub-title">Département de livraison</div>
+        <div class="fg" style="max-width:160px; margin-bottom:8px;">
+          <label>N° département</label>
+          <input type="number" id="im-inp-dept" min="1" max="976" step="1" placeholder="ex : 26">
+        </div>
+        <div id="im-trsp-install-price" style="font-size:13px; color:var(--muted);"></div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /form-immerge -->
+
+
+<!-- ══════════════════════════════════════════
+     FORMULAIRE VOLET INTÉGRÉ
+══════════════════════════════════════════ -->
+<div id="form-integre" style="display:none;">
+
+  <!-- 1. DIMENSIONS -->
+  <div class="card">
+    <div class="card-head"><span class="step-badge">1</span> Dimensions du bassin</div>
+    <div class="card-body">
+      <div class="form-row">
+        <div class="fg">
+          <label>AC — Longueur du bassin</label>
+          <div class="input-wrap">
+            <input type="number" id="it-ac" min="0.5" max="12" step="0.01" placeholder="ex : 8.00">
+            <span class="unit">m</span>
+          </div>
+        </div>
+        <div class="fg">
+          <label>AB — Largeur du bassin</label>
+          <div class="input-wrap">
+            <input type="number" id="it-ab" min="0.5" max="5" step="0.01" placeholder="ex : 4.00">
+            <span class="unit">m</span>
+          </div>
+        </div>
+      </div>
+      <div class="alert alert-info" style="font-size:11px;">Dimensions max : 5m × 12m · Superficie max : 60m² · Bassin béton obligatoire</div>
+      <div id="it-dim-alert" style="display:none;"></div>
+    </div>
+  </div>
+
+  <!-- 2. MOTEUR / STRUCTURE -->
+  <div class="card">
+    <div class="card-head"><span class="step-badge">2</span> Moteur / Structure</div>
+    <div class="card-body">
+      <div class="choices" id="it-struct-choices"><!-- JS --></div>
+      <div id="it-struct-alert" style="display:none;"></div>
+    </div>
+  </div>
+
+  <!-- 3. MUR -->
+  <div class="card">
+    <div class="card-head"><span class="step-badge">3</span> Mur (glissières + lames PVC)</div>
+    <div class="card-body">
+      <div class="sub-title">Hauteur du mur</div>
+      <div class="choices row">
+        <label class="choice sel" id="it-ch-mur1000">
+          <input type="radio" name="it-mur" value="1000" checked>
+          <div>
+            <div class="ch-title">1 000 mm</div>
+            <div class="ch-ref">MU14 / MU15</div>
+            <div style="font-size:10px;color:var(--muted);margin-top:2px;">1 059,08 €</div>
+            <div class="ch-price" id="it-p-mur1000">—</div>
+          </div>
+        </label>
+        <label class="choice" id="it-ch-mur1250">
+          <input type="radio" name="it-mur" value="1250">
+          <div>
+            <div class="ch-title">1 250 mm</div>
+            <div class="ch-ref">MU1254 / MU1255</div>
+            <div style="font-size:10px;color:var(--muted);margin-top:2px;">1 221,66 €</div>
+            <div class="ch-price" id="it-p-mur1250">—</div>
+          </div>
+        </label>
+        <label class="choice" id="it-ch-mur1500">
+          <input type="radio" name="it-mur" value="1500">
+          <div>
+            <div class="ch-title">1 500 mm</div>
+            <div class="ch-ref">MU1504 / MU1505</div>
+            <div style="font-size:10px;color:var(--muted);margin-top:2px;">1 399,77 €</div>
+            <div class="ch-price" id="it-p-mur1500">—</div>
+          </div>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. OPTIONS -->
+  <div class="card">
+    <div class="card-head"><span class="step-badge">4</span> Options</div>
+    <div class="card-body">
+      <div class="sub-title">Poutre aluminium ≤ 5ml</div>
+      <label class="choice" id="it-ch-poutre">
+        <input type="checkbox" id="it-cb-poutre">
+        <div>
+          <div class="ch-title">Poutre aluminium + sabots inox</div>
+          <div class="ch-ref">ACVRPOUTRIN</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:2px;">Pour soutenir le caillebotis posé contre le mur</div>
+          <div class="ch-price">+ 315,90 €</div>
+        </div>
+      </label>
+      <div class="alert alert-warn" style="margin-top:8px; font-size:11px;">
+        L'installation se fait en <strong>2 interventions obligatoires</strong> — 1ère : bassin vide · 2ème : bassin en eau
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. CAILLEBOTIS -->
+  <div class="card">
+    <div class="card-head"><span class="step-badge">5</span> Caillebotis</div>
+    <div class="card-body">
+      <div class="choices row" style="margin-bottom:10px;">
+        <label class="choice sel" id="it-ch-caill-non">
+          <input type="radio" name="it-caill-yn" value="non" checked>
+          <div><div class="ch-title">Non</div></div>
+        </label>
+        <label class="choice" id="it-ch-caill-oui">
+          <input type="radio" name="it-caill-yn" value="oui">
+          <div><div class="ch-title">Oui</div></div>
+        </label>
+      </div>
+      <div id="it-caill-opts" style="display:none;">
+        <div class="sub-title">Matière</div>
+        <div class="choices row" style="margin-bottom:10px;">
+          <label class="choice" id="it-ch-caill-pvc">
+            <input type="radio" name="it-caill-mat" value="pvc">
+            <div>
+              <div class="ch-title">PVC</div>
+              <div class="ch-ref">Blanc · Sable · Gris</div>
+            </div>
+          </label>
+          <label class="choice" id="it-ch-caill-ipe">
+            <input type="radio" name="it-caill-mat" value="ipe">
+            <div><div class="ch-title">Bois IPE</div></div>
+          </label>
+        </div>
+        <div id="it-caill-larg-wrap" style="display:none;">
+          <div class="sub-title">Largeur</div>
+          <div class="choices row">
+            <label class="choice" id="it-ch-caill-70">
+              <input type="radio" name="it-caill-larg" value="70">
+              <div>
+                <div class="ch-title">70 cm</div>
+                <div class="ch-price" id="it-p-caill-70">—</div>
+              </div>
+            </label>
+            <label class="choice" id="it-ch-caill-90">
+              <input type="radio" name="it-caill-larg" value="90">
+              <div>
+                <div class="ch-title">90 cm</div>
+                <div class="ch-price" id="it-p-caill-90">—</div>
+              </div>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. TRANSPORT -->
+  <div class="card">
+    <div class="card-head"><span class="step-badge">6</span> Transport</div>
+    <div class="card-body">
+      <div class="choices">
+        <label class="choice sel" id="it-ch-trsp-none">
+          <input type="radio" name="it-transport" value="none" checked>
+          <div>
+            <div class="ch-title">Sans livraison / Enlèvement sur place</div>
+            <div class="ch-price">—</div>
+          </div>
+        </label>
+        <label class="choice" id="it-ch-trsp-seul">
+          <input type="radio" name="it-transport" value="seul">
+          <div>
+            <div class="ch-title">Transport seul (livraison France)</div>
+            <div class="ch-ref">Prix selon zone</div>
+          </div>
+        </label>
+        <label class="choice" id="it-ch-trsp-install">
+          <input type="radio" name="it-transport" value="install">
+          <div>
+            <div class="ch-title">Transport + Installation</div>
+            <div class="ch-ref">Prix selon département</div>
+          </div>
+        </label>
+      </div>
+
+      <div id="it-trsp-seul-wrap" style="display:none;" class="sub">
+        <div class="sub-title">Zone de livraison</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <div class="fg" style="max-width:140px;">
+            <label>N° département (auto-détection)</label>
+            <input type="number" id="it-inp-dept-zone" min="1" max="95" step="1" placeholder="ex : 26">
+          </div>
+          <div id="it-zone-detected" style="font-size:12px;color:var(--muted);margin-top:16px;"></div>
+        </div>
+        <div class="choices" id="it-trsp-zone-choices">
+          <label class="choice sel">
+            <input type="radio" name="it-trsp-zone" value="std" checked>
+            <div style="flex:1;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;">
+                <div class="ch-title">France standard</div>
+                <span class="ch-price" id="it-p-trsp-std">—</span>
+              </div>
+              <div class="ch-ref">TRSPVR5</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:3px;">Dép. 01 07 26 38 42 43 63 69</div>
+            </div>
+          </label>
+          <label class="choice">
+            <input type="radio" name="it-trsp-zone" value="SE">
+            <div style="flex:1;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;">
+                <div class="ch-title">Sud-Est</div>
+                <span class="ch-price" id="it-p-trsp-SE">—</span>
+              </div>
+              <div class="ch-ref">TRSPVR5SE</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:3px;">Dép. 04 05 06 11 12 13 30 34 48 66 73 74 83 84</div>
+            </div>
+          </label>
+          <label class="choice">
+            <input type="radio" name="it-trsp-zone" value="SO">
+            <div style="flex:1;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;">
+                <div class="ch-title">Sud-Ouest</div>
+                <span class="ch-price" id="it-p-trsp-SO">—</span>
+              </div>
+              <div class="ch-ref">TRSPVR5SO</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:3px;">Dép. 09 15 16 17 19 23 24 31 32 33 36 37 40 41 44 46 47 49 64 65 72 79 81 82 85 86 87</div>
+            </div>
+          </label>
+          <label class="choice">
+            <input type="radio" name="it-trsp-zone" value="N">
+            <div style="flex:1;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;">
+                <div class="ch-title">Nord / Ouest</div>
+                <span class="ch-price" id="it-p-trsp-N">—</span>
+              </div>
+              <div class="ch-ref">TRSPVR5N</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:3px;">Dép. 02 03 08 10 14 18 21 22 25 27 28 29 35 39 45 50 51 52 53 54 55 56 57 58 59 60 61 62 67 68 70 71 75 76 77 78 80 88 89 90 91 92 93 94 95</div>
+            </div>
+          </label>
+        </div>
+        <div class="alert alert-info" style="margin-top:8px;">🏝 <strong>Corse (2A, 2B)</strong> — transport sur devis (TRSPVRAFFRET)</div>
+      </div>
+
+      <div id="it-trsp-install-wrap" style="display:none;" class="sub">
+        <div class="sub-title">Département de livraison</div>
+        <div class="fg" style="max-width:160px; margin-bottom:8px;">
+          <label>N° département</label>
+          <input type="number" id="it-inp-dept" min="1" max="976" step="1" placeholder="ex : 26">
+        </div>
+        <div id="it-trsp-install-price" style="font-size:13px; color:var(--muted);"></div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /form-integre -->
+
+</div><!-- /form-panel -->
+
+
+<!-- ══════════════════ PRICE PANEL ══════════════════ -->
+<div class="price-panel">
+  <div class="price-card">
+    <div class="price-head"><span class="price-head-icon">€</span> Récapitulatif de prix</div>
+
+    <div class="price-lines" id="price-lines">
+      <div class="price-empty">Saisissez les dimensions pour commencer</div>
+    </div>
+
+    <div class="price-footer" id="price-footer" style="display:none;">
+
+      <div class="pf-row">
+        <span class="pf-muted">Sous-total HT</span>
+        <span id="val-subtotal">—</span>
+      </div>
+
+      <div class="remise-wrap">
+        <label for="inp-remise">Remise</label>
+        <div class="ri">
+          <input type="number" id="inp-remise" min="0" max="100" step="0.5" value="0">
+          <span style="font-size:13px;">%</span>
+        </div>
+        <span class="remise-sign" id="val-remise">—</span>
+      </div>
+
+      <div class="pf-row ht">
+        <span>Total HT</span>
+        <span id="val-ht">—</span>
+      </div>
+      <div class="pf-row pf-muted" style="font-size:12px;">
+        <span>TVA 20 %</span>
+        <span id="val-tva">—</span>
+      </div>
+      <div class="pf-row ttc">
+        <span>Total TTC</span>
+        <span id="val-ttc">—</span>
+      </div>
+
+      <button class="btn-print" onclick="window.print()">🖨 Imprimer le récapitulatif</button>
+    </div>
+  </div>
+</div>
+
+</div><!-- /layout -->
+
+<script>
+/* ═══════════════════════════════════════════
+   DONNÉES TARIFAIRES 2026
+═══════════════════════════════════════════ */
+const D = {
+
+  immerge: {
+    structures: [
+      { ref:'VRSUB4',  label:'Moteur 120S — Largeur ≤ 4m',          prix:4663.51, abMax:4.0, supMax:50, tag:'AB ≤ 4m · limite 50m²' },
+      { ref:'VRSUB5',  label:'Moteur 120S — Largeur 4,01 à 5m',      prix:5288.49, abMax:5.0, supMax:50, tag:'AB 4,01–5m · limite 50m²' },
+      { ref:'VRSUB6',  label:'Moteur 300S — Largeur 5,01 à 6m',      prix:5522.26, abMax:6.0,            tag:'AB 5,01–6m ou > 50m²' },
+    ],
+    mur: {
+      1000: { prix:[1059.08, 1059.08, 1491.23] },
+      1250: { prix:[1221.66, 1221.66, 1668.96] },
+      1500: { prix:[1399.77, 1399.77, 2098.48] },
+    },
+    opts: {
+      ACVREQUPOUTR:  { label:'Équerres ×2 — support poutre + mur',    prix:535.80 },
+      ACVREQUFLASQ:  { label:'Équerres ×4 — pour flasques',            prix:693.50 },
+      ACVREQUTELESC: { label:'Équerre anti-flexion poutre',             prix:540.00 },
+      ACVRPOUTR:     { label:'Poutre aluminium ≤ 6ml',                  prix:361.45 },
+      ACVRCORN:      { label:'Cornière support caillebotis 60×60',      prix:265.90 },
+    },
+    caillebotis: [
+      { key:'pvc_70',  label:'PVC 70 cm',          ref:['CAIPVC704','CAIPVC705','CAIPVC706'], prix:[1176.02,1313.01,1439.94] },
+      { key:'pvc_90',  label:'PVC 90 cm',          ref:['CAIPVC904','CAIPVC905','CAIPVC906'], prix:[1409.76,1546.75,1673.68] },
+      { key:'rob_70',  label:'Bois Robinier 70 cm',ref:['CAIBO704', 'CAIBO705', 'CAIBO706'],  prix:[1771.80,2071.01,2330.96] },
+      { key:'rob_90',  label:'Bois Robinier 90 cm',ref:['CAIBO904', 'CAIBO905', 'CAIBO906'],  prix:[2222.60,2634.51,2991.06] },
+      { key:'ipe_70',  label:'Bois IPE 70 cm',     ref:['CAIBO704', 'CAIBO705', 'CAIBO706'],  prix:[1771.80*1.25,2071.01*1.25,2330.96*1.25] },
+      { key:'ipe_90',  label:'Bois IPE 90 cm',     ref:['CAIBO904', 'CAIBO905', 'CAIBO906'],  prix:[2222.60*1.25,2634.51*1.25,2991.06*1.25] },
+    ],
+  },
+
+  integre: {
+    structures: [
+      { ref:'VRSUBTOT4', label:'Moteur 24V — Largeur ≤ 4m',     prix:6184.50, abMax:4.0, tag:'AB ≤ 4m' },
+      { ref:'VRSUBTOT5', label:'Moteur 24V — Largeur 4,01 à 5m', prix:6300.45, abMax:5.0, tag:'AB 4,01–5m' },
+    ],
+    mur: {
+      1000: { prix:[1059.08, 1059.08] },
+      1250: { prix:[1221.66, 1221.66] },
+      1500: { prix:[1399.77, 1399.77] },
+    },
+    opts: {
+      ACVRPOUTRIN: { label:'Poutre aluminium ≤ 5ml + sabots inox', prix:315.90 },
+    },
+    caillebotis: [
+      { key:'pvc_70',  label:'PVC 70 cm',    ref:['CAIPVC704IM','CAIPVC705IM'], prix:[1176.02,1313.01] },
+      { key:'pvc_90',  label:'PVC 90 cm',    ref:['CAIPVC904IM','CAIPVC905IM'], prix:[1409.76,1546.75] },
+      { key:'ipe_70',  label:'Bois IPE 70 cm', ref:['CAIBO704IM','CAIBO705IM'], prix:[2126.17,2485.21] },
+      { key:'ipe_90',  label:'Bois IPE 90 cm', ref:['CAIBO904IM','CAIBO905IM'], prix:[2667.13,3161.41] },
+    ],
+  },
+
+  trspSeul: {
+    std: { label:'France standard', p5:225, p6:260, depts:[1,7,26,38,42,43,63,69] },
+    SE:  { label:'Sud-Est',         p5:300, p6:345, depts:[4,5,6,11,12,13,30,34,48,66,73,74,83,84] },
+    SO:  { label:'Sud-Ouest',       p5:375, p6:415, depts:[9,15,16,17,19,23,24,31,32,33,36,37,40,41,44,46,47,49,64,65,72,79,81,82,85,86,87] },
+    N:   { label:'Nord / Ouest',    p5:395, p6:445, depts:[2,3,8,10,14,18,21,22,25,27,28,29,35,39,45,50,51,52,53,54,55,56,57,58,59,60,61,62,67,68,70,71,75,76,77,78,80,88,89,90,91,92,93,94,95] },
+  },
+
+  trspInstallImmerge: {
+    1:1103.336, 2:1649.648, 3:1215.812, 4:996.216,  5:996.216,  6:1103.336, 7:996.216,  8:1649.648,
+    9:1322.932,10:1430.052,11:1215.812,12:1215.812,13:1103.336,14:1649.648,15:1215.812,16:1430.052,
+    17:1537.172,18:1430.052,19:1322.932,21:1322.932,22:1649.648,23:1322.932,24:1430.052,25:1322.932,
+    26:776.62, 27:1649.648,28:1537.172,29:1649.648,30:996.216, 31:1215.812,32:1322.932,33:1430.052,
+    34:1103.336,35:1649.648,36:1430.052,37:1537.172,38:996.216, 39:1215.812,40:1430.052,41:1430.052,
+    42:996.216, 43:1103.336,44:1430.052,45:1430.052,46:1322.932,47:1430.052,48:1103.336,49:1649.648,
+    50:1649.648,51:1537.172,52:1430.052,53:1649.648,54:1537.172,55:1537.172,56:1649.648,57:1537.172,
+    58:1322.932,59:1649.648,60:1649.648,61:1649.648,62:1649.648,63:1215.812,64:1430.052,65:1322.932,
+    66:1215.812,67:1537.172,68:1430.052,69:996.216, 70:1322.932,71:1103.336,72:1649.648,73:1103.336,
+    74:1103.336,75:1537.172,76:1649.648,77:1537.172,78:1537.172,79:1537.172,80:1649.648,81:1215.812,
+    82:1322.932,83:1103.336,84:996.216, 85:1649.648,86:1430.052,87:1430.052,88:1430.052,89:1430.052,
+    90:1537.172,91:1537.172,92:1537.172,93:1537.172,94:1537.172,95:1537.172,
+    BE:1691.196,
+  },
+
+  trspInstallIntegre: {
+    1:1835.951, 2:2745.014, 3:2023.111, 4:1657.703, 5:1657.703, 6:1835.951, 7:1657.703, 8:2745.014,
+    9:2201.359,10:2379.607,11:2023.111,12:2023.111,13:1835.951,14:2745.014,15:2023.111,16:2379.607,
+    17:2557.854,18:2379.607,19:2201.359,21:2201.359,22:2745.014,23:2201.359,24:2379.607,25:2201.359,
+    26:1292.296,27:2745.014,28:2557.854,29:2745.014,30:1657.703,31:2023.111,32:2201.359,33:2379.607,
+    34:1835.951,35:2745.014,36:2379.607,37:2557.854,38:1657.703,39:2023.111,40:2379.607,41:2379.607,
+    42:1657.703,43:1835.951,44:2379.607,45:2379.607,46:2201.359,47:2379.607,48:1835.951,49:2745.014,
+    50:2745.014,51:2557.854,52:2379.607,53:2745.014,54:2557.854,55:2557.854,56:2745.014,57:2557.854,
+    58:2201.359,59:2745.014,60:2745.014,61:2745.014,62:2745.014,63:2023.111,64:2379.607,65:2201.359,
+    66:2023.111,67:2557.854,68:2379.607,69:1657.703,70:2201.359,71:1835.951,72:2745.014,73:1835.951,
+    74:1835.951,75:2557.854,76:2745.014,77:2557.854,78:2557.854,79:2557.854,80:2745.014,81:2023.111,
+    82:2201.359,83:1835.951,84:1657.703,85:2745.014,86:2379.607,87:2379.607,88:2379.607,89:2379.607,
+    90:2557.854,91:2557.854,92:2557.854,93:2557.854,94:2557.854,95:2557.854,
+    BE:2666.934,
+  },
+};
+
+/* ═══════════════════════════════════════════
+   HELPERS
+═══════════════════════════════════════════ */
+const fmt = n => new Intl.NumberFormat('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2}).format(n) + ' €';
+function v(id)  { return document.getElementById(id); }
+function q(sel) { return document.querySelector(sel); }
+function qa(sel){ return document.querySelectorAll(sel); }
+
+function abBracketImmerge(ab) {
+  if (!ab || isNaN(ab)) return -1;
+  if (ab <= 4)   return 0;
+  if (ab <= 5)   return 1;
+  if (ab <= 6)   return 2;
+  return -1;
+}
+function abBracketIntegre(ab) {
+  if (!ab || isNaN(ab)) return -1;
+  if (ab <= 4) return 0;
+  if (ab <= 5) return 1;
+  return -1;
+}
+function suggestImmergeStruct(ab, sup) {
+  for (const s of D.immerge.structures) {
+    if (ab <= s.abMax && (!s.supMax || sup <= s.supMax)) return s.ref;
+  }
+  return D.immerge.structures[D.immerge.structures.length-1].ref;
+}
+function suggestIntegreStruct(ab) {
+  for (const s of D.integre.structures) { if (ab <= s.abMax) return s.ref; }
+  return D.integre.structures[D.integre.structures.length-1].ref;
+}
+
+/* ── Active tab ── */
+let activeTab = 'immerge';
+
+function switchTab(tab) {
+  activeTab = tab;
+  v('form-immerge').style.display = tab === 'immerge' ? '' : 'none';
+  v('form-integre').style.display = tab === 'integre' ? '' : 'none';
+  qa('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  calculate();
+}
+
+/* ═══════════════════════════════════════════
+   RENDER STRUCTURES
+═══════════════════════════════════════════ */
+function renderStructures(pfx, structs, abVal, sup) {
+  const container  = v(pfx+'-struct-choices');
+  const current    = q('input[name='+pfx+'-struct]:checked')?.value;
+  const hasAb      = !isNaN(abVal);
+  const hasSup     = hasAb && !isNaN(sup);
+  const suggested  = hasAb ? (pfx === 'im' ? suggestImmergeStruct(abVal, sup) : suggestIntegreStruct(abVal)) : null;
+
+  const currentIncompat = current && structs.find(s => s.ref === current && s.supMax && hasSup && sup > s.supMax);
+  const currentValid    = current && structs.find(s => s.ref === current) && !currentIncompat;
+  const toCheck         = currentValid ? current : suggested;
+
+  container.innerHTML = structs.map(s => {
+    const incompat    = hasSup && s.supMax && sup > s.supMax;
+    const isSuggested = s.ref === suggested;
+    const isChecked   = s.ref === toCheck && !incompat;
+    let badges = '';
+    if (isSuggested) badges += '<span class="ch-badge">Suggéré</span>';
+    if (incompat)    badges += '<span style="font-size:10px;background:#FEE2E2;color:#991B1B;padding:2px 8px;border-radius:20px;font-weight:700;">Superficie > 50m²</span>';
+
+    return `
+      <label class="choice${isChecked ? ' sel' : ''}${incompat ? ' incompat' : ''}" data-ref="${s.ref}">
+        <input type="radio" name="${pfx}-struct" value="${s.ref}" ${isChecked ? 'checked' : ''} ${incompat ? 'disabled' : ''}>
+        <div style="flex:1;">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            <span class="ch-title">${s.label}</span>${badges}
+          </div>
+          <div style="display:flex;gap:12px;margin-top:2px;">
+            <span class="ch-ref">${s.ref}</span>
+            <span style="font-size:10px;color:var(--muted);">${s.tag}</span>
+          </div>
+          <div class="ch-price">${fmt(s.prix)}</div>
+        </div>
+      </label>`;
+  }).join('');
+
+  bindChoices('#'+pfx+'-struct-choices input[type=radio]', calculate);
+}
+
+/* ═══════════════════════════════════════════
+   UPDATE MUR PRICES
+═══════════════════════════════════════════ */
+function updateMurPrices(pfx, murData, bracket) {
+  [1000, 1250, 1500].forEach(h => {
+    const el = v(pfx+'-p-mur'+h);
+    if (!el) return;
+    if (bracket < 0 || bracket >= murData[h].prix.length) {
+      el.textContent = '—';
+    } else {
+      el.textContent = fmt(murData[h].prix[bracket]);
+    }
+  });
+}
+
+/* ═══════════════════════════════════════════
+   UPDATE CAILLEBOTIS PRICES (two-step)
+═══════════════════════════════════════════ */
+const IM_MAT_PREFIX = { pvc: 'pvc', robinier: 'rob', ipe: 'ipe' };
+const IT_MAT_PREFIX = { pvc: 'pvc', ipe: 'ipe' };
+
+function updateCaillPrices(pfx, matVal, bracket) {
+  const prefix  = pfx === 'im' ? IM_MAT_PREFIX[matVal] : IT_MAT_PREFIX[matVal];
+  const caillDB = pfx === 'im' ? D.immerge.caillebotis : D.integre.caillebotis;
+  [70, 90].forEach(larg => {
+    const priceEl = v(pfx+'-p-caill-'+larg);
+    if (!priceEl) return;
+    const key  = prefix + '_' + larg;
+    const data = caillDB.find(c => c.key === key);
+    if (data && bracket >= 0 && bracket < data.prix.length) {
+      priceEl.textContent = fmt(data.prix[bracket]);
+    } else {
+      priceEl.textContent = '—';
+    }
+  });
+  v(pfx+'-caill-larg-wrap').style.display = prefix ? '' : 'none';
+}
+
+/* ═══════════════════════════════════════════
+   UPDATE TRANSPORT ZONE PRICES
+═══════════════════════════════════════════ */
+function updateTrspZonePrices(pfx, ab) {
+  ['std','SE','SO','N'].forEach(zk => {
+    const el = v(pfx+'-p-trsp-'+zk);
+    if (!el) return;
+    if (!ab || isNaN(ab)) { el.textContent = '—'; return; }
+    const z = D.trspSeul[zk];
+    el.textContent = fmt(ab <= 5 ? z.p5 : z.p6);
+  });
+}
+
+/* ═══════════════════════════════════════════
+   RENDER PRICES
+═══════════════════════════════════════════ */
+function renderEmpty() {
+  v('price-lines').innerHTML = '<div class="price-empty">Saisissez les dimensions pour commencer</div>';
+  v('price-footer').style.display = 'none';
+}
+
+function renderPrices(lines) {
+  const remisePct = parseFloat(v('inp-remise').value) || 0;
+  v('price-lines').innerHTML = lines.map(l => `
+    <div class="pline">
+      <div class="pline-left">
+        <div class="pline-name">${l.name}</div>
+        ${l.ref ? `<div class="pline-ref">${l.ref}</div>` : ''}
+      </div>
+      <div class="pline-amt">${l.devis ? '<span class="pline-devis">sur devis</span>' : fmt(l.prix)}</div>
+    </div>`).join('');
+
+  const sub = lines.filter(l=>l.prix>0).reduce((a,l)=>a+l.prix, 0);
+  const remiseAmt = sub * remisePct / 100;
+  const ht  = sub - remiseAmt;
+  const tva = ht * 0.20;
+  const ttc = ht + tva;
+
+  v('val-subtotal').textContent = fmt(sub);
+  v('val-remise').textContent   = remisePct > 0 ? '− '+fmt(remiseAmt) : '—';
+  v('val-ht').textContent       = fmt(ht);
+  v('val-tva').textContent      = fmt(tva);
+  v('val-ttc').textContent      = fmt(ttc);
+  v('price-footer').style.display = 'block';
+}
+
+/* ═══════════════════════════════════════════
+   CALCULATE — IMMERGÉ
+═══════════════════════════════════════════ */
+function calcImmerge() {
+  const ab = parseFloat(v('im-ab').value);
+  const ac = parseFloat(v('im-ac').value);
+  if (isNaN(ab) || isNaN(ac)) { renderEmpty(); return; }
+  if (ab > 6 || ab * ac > 84) { renderEmpty(); return; }
+
+  const bracket = abBracketImmerge(ab);
+  const lines   = [];
+
+  // Structure
+  const strRef  = q('input[name=im-struct]:checked')?.value;
+  const strData = D.immerge.structures.find(s => s.ref === strRef);
+  if (strData) lines.push({ name: strData.label, ref: strData.ref, prix: strData.prix });
+
+  // Mur
+  const murH    = parseInt(q('input[name=im-mur]:checked')?.value || '1000');
+  const murData = D.immerge.mur[murH];
+  if (bracket >= 0 && murData) {
+    const murRef = ['MU14/MU15/MU16','MU1254/55/56','MU1504/05/06'][bracket] || '—';
+    lines.push({ name: 'Mur '+murH+'mm — glissières + lames PVC', ref: murRef, prix: murData.prix[bracket] });
+  }
+
+  // Pose + équerre
+  const pose = q('input[name=im-pose]:checked')?.value;
+  if (pose === 'arase') {
+    qa('input[name=im-equerre]:checked').forEach(cb => {
+      const opt = D.immerge.opts[cb.value];
+      if (opt) lines.push({ name: opt.label, ref: cb.value, prix: opt.prix });
+    });
+  }
+
+  // Options
+  if (v('im-cb-antiflex')?.checked) {
+    const opt = D.immerge.opts.ACVREQUTELESC;
+    lines.push({ name: opt.label, ref: 'ACVREQUTELESC', prix: opt.prix });
+  }
+  if (v('im-cb-poutre')?.checked) {
+    const opt = D.immerge.opts.ACVRPOUTR;
+    lines.push({ name: opt.label, ref: 'ACVRPOUTR', prix: opt.prix });
+  }
+  if (v('im-cb-corn')?.checked) {
+    const opt = D.immerge.opts.ACVRCORN;
+    lines.push({ name: opt.label, ref: 'ACVRCORN', prix: opt.prix });
+  }
+
+  // Caillebotis
+  if (q('input[name=im-caill-yn]:checked')?.value === 'oui') {
+    const mat  = q('input[name=im-caill-mat]:checked')?.value;
+    const larg = q('input[name=im-caill-larg]:checked')?.value;
+    if (mat && larg) {
+      const key      = IM_MAT_PREFIX[mat] + '_' + larg;
+      const caillData = D.immerge.caillebotis.find(c => c.key === key);
+      if (caillData && bracket >= 0) {
+        lines.push({ name: 'Caillebotis '+caillData.label, ref: caillData.ref[bracket], prix: caillData.prix[bracket] });
+      }
+    }
+  }
+
+  // Transport
+  const trsp = q('input[name=im-transport]:checked')?.value || 'none';
+  if (trsp === 'seul') {
+    const zk   = q('input[name=im-trsp-zone]:checked')?.value || 'std';
+    const zone = D.trspSeul[zk];
+    if (zone) {
+      const prix = ab <= 5 ? zone.p5 : zone.p6;
+      lines.push({ name: 'Transport — '+zone.label, ref: 'TRSPVR', prix });
+    }
+  } else if (trsp === 'install') {
+    const dept = parseInt(v('im-inp-dept')?.value);
+    const prix = D.trspInstallImmerge[dept];
+    if (prix) lines.push({ name: 'Transport + Installation — Dép. '+dept, ref: 'TRSPINSTALL', prix });
+    else if (dept) lines.push({ name: 'Transport + Installation — Dép. '+dept, ref: 'TRSPINSTALL', prix:0, devis:true });
+  }
+
+  renderPrices(lines);
+}
+
+/* ═══════════════════════════════════════════
+   CALCULATE — INTÉGRÉ
+═══════════════════════════════════════════ */
+function calcIntegre() {
+  const ab = parseFloat(v('it-ab').value);
+  const ac = parseFloat(v('it-ac').value);
+  if (isNaN(ab) || isNaN(ac)) { renderEmpty(); return; }
+  if (ab > 5 || ab * ac > 60) { renderEmpty(); return; }
+
+  const bracket = abBracketIntegre(ab);
+  const lines   = [];
+
+  // Structure
+  const strRef  = q('input[name=it-struct]:checked')?.value;
+  const strData = D.integre.structures.find(s => s.ref === strRef);
+  if (strData) lines.push({ name: strData.label, ref: strData.ref, prix: strData.prix });
+
+  // Mur
+  const murH    = parseInt(q('input[name=it-mur]:checked')?.value || '1000');
+  const murData = D.integre.mur[murH];
+  if (bracket >= 0 && murData) {
+    const murRef = ['MU14/MU15','MU1254/55','MU1504/05'][bracket] || '—';
+    lines.push({ name: 'Mur '+murH+'mm — glissières + lames PVC', ref: murRef, prix: murData.prix[bracket] });
+  }
+
+  // Poutre
+  if (v('it-cb-poutre')?.checked) {
+    const opt = D.integre.opts.ACVRPOUTRIN;
+    lines.push({ name: opt.label, ref: 'ACVRPOUTRIN', prix: opt.prix });
+  }
+
+  // Caillebotis
+  if (q('input[name=it-caill-yn]:checked')?.value === 'oui') {
+    const mat  = q('input[name=it-caill-mat]:checked')?.value;
+    const larg = q('input[name=it-caill-larg]:checked')?.value;
+    if (mat && larg) {
+      const key      = IT_MAT_PREFIX[mat] + '_' + larg;
+      const caillData = D.integre.caillebotis.find(c => c.key === key);
+      if (caillData && bracket >= 0) {
+        lines.push({ name: 'Caillebotis '+caillData.label, ref: caillData.ref[bracket], prix: caillData.prix[bracket] });
+      }
+    }
+  }
+
+  // Transport
+  const trsp = q('input[name=it-transport]:checked')?.value || 'none';
+  if (trsp === 'seul') {
+    const zk   = q('input[name=it-trsp-zone]:checked')?.value || 'std';
+    const zone = D.trspSeul[zk];
+    if (zone) lines.push({ name: 'Transport — '+zone.label, ref: 'TRSPVR', prix: zone.p5 });
+  } else if (trsp === 'install') {
+    const dept = parseInt(v('it-inp-dept')?.value);
+    const prix = D.trspInstallIntegre[dept];
+    if (prix) lines.push({ name: 'Transport + Installation — Dép. '+dept, ref: 'TRSPINSTALL', prix });
+    else if (dept) lines.push({ name: 'Transport + Installation — Dép. '+dept, ref: 'TRSPINSTALL', prix:0, devis:true });
+  }
+
+  renderPrices(lines);
+}
+
+function calculate() {
+  if (activeTab === 'immerge') calcImmerge();
+  else calcIntegre();
+}
+
+/* ═══════════════════════════════════════════
+   SYNC / BIND
+═══════════════════════════════════════════ */
+function syncChoices(radioSel) {
+  qa(radioSel).forEach(r => {
+    const lbl = r.closest('.choice');
+    if (lbl) lbl.classList.toggle('sel', r.checked);
+  });
+}
+
+function bindChoices(sel, cb) {
+  qa(sel).forEach(r => r.addEventListener('change', () => {
+    syncChoices(sel);
+    if (cb) cb();
+  }));
+}
+
+/* ═══════════════════════════════════════════
+   INIT
+═══════════════════════════════════════════ */
+(function init() {
+
+  /* ── IMMERGÉ ── */
+  renderStructures('im', D.immerge.structures, NaN, NaN);
+
+  ['im-ab','im-ac'].forEach(id => v(id).addEventListener('input', () => {
+    const ab      = parseFloat(v('im-ab').value);
+    const ac      = parseFloat(v('im-ac').value);
+    const sup     = ab * ac;
+    const bracket = abBracketImmerge(ab);
+
+    // Validations dimensions
+    const dimAlert = v('im-dim-alert');
+    if (!isNaN(ab) && ab > 6) {
+      dimAlert.innerHTML = '<div class="alert alert-err" style="margin-top:8px;">⚠️ Largeur maximum 6 m — contactez-nous pour un devis.</div>';
+      dimAlert.style.display = '';
+      renderEmpty();
+      return;
+    }
+    if (!isNaN(ab) && !isNaN(ac) && sup > 84) {
+      dimAlert.innerHTML = '<div class="alert alert-err" style="margin-top:8px;">⚠️ Superficie maximum 84 m² — contactez-nous pour un devis.</div>';
+      dimAlert.style.display = '';
+      renderEmpty();
+      return;
+    }
+    dimAlert.style.display = 'none';
+
+    renderStructures('im', D.immerge.structures, ab, sup);
+    updateMurPrices('im', D.immerge.mur, bracket);
+    updateTrspZonePrices('im', ab);
+
+    // Anti-flex badge : visible dès AB > 4m
+    v('im-antiflex-badge').style.display = (!isNaN(ab) && ab > 4) ? '' : 'none';
+
+    // Mettre à jour les prix du caillebotis si matière déjà choisie
+    const mat = q('input[name=im-caill-mat]:checked')?.value;
+    if (mat) updateCaillPrices('im', mat, bracket);
+
+    if (activeTab === 'immerge') calculate();
+  }));
+
+  bindChoices('input[name=im-mur]', calculate);
+
+  // Pose façade / arase
+  qa('input[name=im-pose]').forEach(r => r.addEventListener('change', () => {
+    syncChoices('input[name=im-pose]');
+    const pose = q('input[name=im-pose]:checked')?.value;
+    v('im-equerre-wrap').style.display = pose === 'arase' ? '' : 'none';
+    calculate();
+  }));
+
+  ['im-cb-eq-poutr','im-cb-eq-flasq'].forEach(id => {
+    const el = v(id);
+    if (el) el.addEventListener('change', function() {
+      this.closest('.choice').classList.toggle('sel', this.checked);
+      calculate();
+    });
+  });
+
+  ['im-cb-antiflex','im-cb-poutre','im-cb-corn'].forEach(id => {
+    const el = v(id);
+    if (el) el.addEventListener('change', function() {
+      const lbl = this.closest('.choice');
+      if (lbl) lbl.classList.toggle('sel', this.checked);
+      calculate();
+    });
+  });
+
+  // Caillebotis oui/non
+  qa('input[name=im-caill-yn]').forEach(r => r.addEventListener('change', () => {
+    syncChoices('input[name=im-caill-yn]');
+    v('im-caill-opts').style.display = q('input[name=im-caill-yn]:checked')?.value === 'oui' ? '' : 'none';
+    calculate();
+  }));
+
+  // Caillebotis matière immergé
+  qa('input[name=im-caill-mat]').forEach(r => r.addEventListener('change', () => {
+    syncChoices('input[name=im-caill-mat]');
+    const ab      = parseFloat(v('im-ab').value);
+    const bracket = abBracketImmerge(ab);
+    updateCaillPrices('im', r.value, bracket);
+    // Pré-sélectionner 70cm par défaut
+    const larg70 = q('input[name=im-caill-larg][value="70"]');
+    if (larg70) { larg70.checked = true; syncChoices('input[name=im-caill-larg]'); }
+    calculate();
+  }));
+
+  // Caillebotis largeur immergé
+  bindChoices('input[name=im-caill-larg]', calculate);
+
+  // Transport immergé
+  qa('input[name=im-transport]').forEach(r => r.addEventListener('change', () => {
+    syncChoices('input[name=im-transport]');
+    const mode = q('input[name=im-transport]:checked')?.value;
+    v('im-trsp-seul-wrap').style.display    = mode === 'seul'    ? '' : 'none';
+    v('im-trsp-install-wrap').style.display = mode === 'install' ? '' : 'none';
+    calculate();
+  }));
+  bindChoices('input[name=im-trsp-zone]', calculate);
+  v('im-inp-dept-zone').addEventListener('input', () => {
+    const dept = parseInt(v('im-inp-dept-zone').value);
+    if (isNaN(dept)) { v('im-zone-detected').textContent = ''; return; }
+    const zk = Object.keys(D.trspSeul).find(k => D.trspSeul[k].depts.includes(dept));
+    if (zk) {
+      const radio = q('input[name=im-trsp-zone][value='+zk+']');
+      if (radio) { radio.checked = true; syncChoices('input[name=im-trsp-zone]'); }
+      v('im-zone-detected').textContent = '→ '+D.trspSeul[zk].label;
+    } else {
+      v('im-zone-detected').textContent = '';
+    }
+    calculate();
+  });
+  v('im-inp-dept').addEventListener('input', calculate);
+
+  /* ── INTÉGRÉ ── */
+  renderStructures('it', D.integre.structures, NaN);
+
+  ['it-ab','it-ac'].forEach(id => v(id).addEventListener('input', () => {
+    const ab      = parseFloat(v('it-ab').value);
+    const bracket = abBracketIntegre(ab);
+
+    // Validations dimensions
+    const dimAlert = v('it-dim-alert');
+    const ac = parseFloat(v('it-ac').value);
+    if (!isNaN(ab) && ab > 5) {
+      dimAlert.innerHTML = '<div class="alert alert-err" style="margin-top:8px;">⚠️ Largeur maximum 5 m — contactez-nous pour un devis.</div>';
+      dimAlert.style.display = '';
+      renderEmpty();
+      return;
+    }
+    if (!isNaN(ab) && !isNaN(ac) && ab * ac > 60) {
+      dimAlert.innerHTML = '<div class="alert alert-err" style="margin-top:8px;">⚠️ Superficie maximum 60 m² — contactez-nous pour un devis.</div>';
+      dimAlert.style.display = '';
+      renderEmpty();
+      return;
+    }
+    dimAlert.style.display = 'none';
+
+    renderStructures('it', D.integre.structures, ab);
+    updateMurPrices('it', D.integre.mur, bracket);
+    updateTrspZonePrices('it', ab);
+
+    const mat = q('input[name=it-caill-mat]:checked')?.value;
+    if (mat) updateCaillPrices('it', mat, bracket);
+
+    if (activeTab === 'integre') calculate();
+  }));
+
+  bindChoices('input[name=it-mur]', calculate);
+
+  v('it-cb-poutre').addEventListener('change', function() {
+    v('it-ch-poutre').classList.toggle('sel', this.checked);
+    calculate();
+  });
+
+  // Caillebotis oui/non intégré
+  qa('input[name=it-caill-yn]').forEach(r => r.addEventListener('change', () => {
+    syncChoices('input[name=it-caill-yn]');
+    v('it-caill-opts').style.display = q('input[name=it-caill-yn]:checked')?.value === 'oui' ? '' : 'none';
+    calculate();
+  }));
+
+  // Caillebotis matière intégré
+  qa('input[name=it-caill-mat]').forEach(r => r.addEventListener('change', () => {
+    syncChoices('input[name=it-caill-mat]');
+    const ab      = parseFloat(v('it-ab').value);
+    const bracket = abBracketIntegre(ab);
+    updateCaillPrices('it', r.value, bracket);
+    // Pré-sélectionner 70cm par défaut
+    const larg70 = q('input[name=it-caill-larg][value="70"]');
+    if (larg70) { larg70.checked = true; syncChoices('input[name=it-caill-larg]'); }
+    calculate();
+  }));
+
+  // Caillebotis largeur intégré
+  bindChoices('input[name=it-caill-larg]', calculate);
+
+  // Transport intégré
+  qa('input[name=it-transport]').forEach(r => r.addEventListener('change', () => {
+    syncChoices('input[name=it-transport]');
+    const mode = q('input[name=it-transport]:checked')?.value;
+    v('it-trsp-seul-wrap').style.display    = mode === 'seul'    ? '' : 'none';
+    v('it-trsp-install-wrap').style.display = mode === 'install' ? '' : 'none';
+    calculate();
+  }));
+  bindChoices('input[name=it-trsp-zone]', calculate);
+  v('it-inp-dept-zone').addEventListener('input', () => {
+    const dept = parseInt(v('it-inp-dept-zone').value);
+    if (isNaN(dept)) { v('it-zone-detected').textContent = ''; return; }
+    const zk = Object.keys(D.trspSeul).find(k => D.trspSeul[k].depts.includes(dept));
+    if (zk) {
+      const radio = q('input[name=it-trsp-zone][value='+zk+']');
+      if (radio) { radio.checked = true; syncChoices('input[name=it-trsp-zone]'); }
+      v('it-zone-detected').textContent = '→ '+D.trspSeul[zk].label;
+    } else {
+      v('it-zone-detected').textContent = '';
+    }
+    calculate();
+  });
+  v('it-inp-dept').addEventListener('input', calculate);
+
+  /* ── Remise ── */
+  v('inp-remise').addEventListener('input', calculate);
+
+})();
+</script>
+</body>
+</html>

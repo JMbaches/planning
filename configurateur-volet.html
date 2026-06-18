@@ -1,0 +1,1424 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Configurateur Volet Hors-Sol — JM Bâches</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --navy:    #162D5E;
+  --navy-d:  #0F1F42;
+  --navy-l:  #1E3A73;
+  --blue:    #2563EB;
+  --blue-l:  #EFF6FF;
+  --border:  #E2E8F0;
+  --bg:      #EDF1F7;
+  --surface: #F8FAFC;
+  --text:    #0F172A;
+  --text-2:  #475569;
+  --muted:   #94A3B8;
+  --green:   #059669;
+  --red:     #DC2626;
+  --shadow-sm: 0 1px 3px rgba(15,23,42,.06), 0 1px 2px rgba(15,23,42,.04);
+  --shadow:    0 4px 16px rgba(15,23,42,.08), 0 1px 4px rgba(15,23,42,.04);
+  --shadow-lg: 0 8px 32px rgba(15,23,42,.14);
+  --r: 12px;
+  --r-sm: 8px;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ══ HEADER ══ */
+header {
+  background: linear-gradient(110deg, var(--navy-d) 0%, var(--navy-l) 100%);
+  color: #fff;
+  padding: 0 28px;
+  height: 64px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  position: sticky;
+  top: 0;
+  z-index: 200;
+  box-shadow: 0 2px 14px rgba(0,0,0,.35);
+}
+.logo {
+  background: #fff;
+  color: var(--navy);
+  font-weight: 900;
+  font-size: 13px;
+  width: 40px; height: 40px;
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(0,0,0,.2), inset 0 1px 0 rgba(255,255,255,.6);
+}
+header h1 { font-size: 16px; font-weight: 700; letter-spacing: .01em; }
+header p  { font-size: 11.5px; color: rgba(255,255,255,.48); margin-top: 2px; font-weight: 400; }
+
+/* ══ LAYOUT ══ */
+.layout {
+  display: grid;
+  grid-template-columns: 1fr 388px;
+  gap: 24px;
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 24px;
+  align-items: start;
+}
+
+/* ══ CARDS ══ */
+.card {
+  background: #fff;
+  border-radius: var(--r);
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(226,232,240,.7);
+  transition: box-shadow .2s ease;
+}
+.card:focus-within { box-shadow: var(--shadow); }
+
+.card-head {
+  background: linear-gradient(95deg, var(--navy) 0%, var(--navy-l) 100%);
+  color: #fff;
+  padding: 11px 18px;
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.step-badge {
+  background: rgba(255,255,255,.22);
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 800;
+  flex-shrink: 0;
+}
+.card-body { padding: 16px 18px; }
+
+/* ══ FORM INPUTS ══ */
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+.form-row.three { grid-template-columns: 1fr 1fr 1fr; }
+
+.fg { display: flex; flex-direction: column; gap: 5px; }
+.fg label {
+  font-size: 10.5px; font-weight: 700;
+  color: var(--text-2);
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.input-wrap { position: relative; }
+.input-wrap input { padding-right: 38px; }
+.unit {
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  font-size: 12px; color: var(--muted); pointer-events: none; font-weight: 600;
+}
+input[type=number], input[type=text], select {
+  width: 100%;
+  border: 1.5px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--surface);
+  transition: border-color .15s, box-shadow .15s, background .15s;
+  font-family: inherit;
+}
+input[type=number]:focus, input[type=text]:focus, select:focus {
+  outline: none;
+  border-color: var(--blue);
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+}
+
+/* ══ CHOICE CARDS ══ */
+.choices { display: flex; flex-direction: column; gap: 7px; }
+.choices.row { flex-direction: row; flex-wrap: wrap; }
+
+.choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 13px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: border-color .15s, background .15s, box-shadow .15s;
+  background: #fff;
+  flex: 1;
+  min-width: 160px;
+  user-select: none;
+  position: relative;
+  overflow: hidden;
+}
+.choice::after {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 3px;
+  background: transparent;
+  transition: background .15s;
+  border-radius: 3px 0 0 3px;
+}
+.choice:hover { border-color: #93C5FD; background: #F8FBFF; box-shadow: 0 2px 8px rgba(37,99,235,.08); }
+.choice:hover::after { background: #93C5FD; }
+.choice.sel {
+  border-color: var(--blue);
+  background: linear-gradient(135deg, #F0F7FF 0%, #EBF4FF 100%);
+  box-shadow: 0 2px 10px rgba(37,99,235,.1);
+}
+.choice.sel::after { background: var(--blue); }
+.choice.dis { opacity: .55; pointer-events: none; }
+.choice.incompat { opacity: .55; border-color: #FCA5A5; background: #FFF8F8; cursor: not-allowed; }
+
+.choice input[type=radio],
+.choice input[type=checkbox] {
+  width: auto; flex-shrink: 0; margin-top: 2px;
+  accent-color: var(--blue);
+}
+.ch-title { font-size: 13px; font-weight: 600; line-height: 1.35; color: var(--text); }
+.ch-ref   { font-size: 10px; color: var(--muted); font-family: 'SF Mono', ui-monospace, monospace; margin-top: 2px; letter-spacing: .04em; }
+.ch-price { font-size: 13px; font-weight: 700; color: var(--blue); margin-top: 5px; }
+.ch-badge { font-size: 10px; background: #D1FAE5; color: #065F46; padding: 2px 8px; border-radius: 20px; font-weight: 700; }
+
+/* ══ SUB-SECTIONS ══ */
+.sub {
+  background: var(--surface);
+  border-radius: var(--r-sm);
+  padding: 14px;
+  margin-top: 10px;
+  border: 1px solid var(--border);
+}
+.sub-title {
+  font-size: 10.5px; font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase; letter-spacing: .08em;
+  margin-bottom: 10px;
+}
+
+/* ══ TOGGLE ROW ══ */
+.toggle-row {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+  font-size: 13px; font-weight: 500;
+}
+.toggle-row input { width: auto; accent-color: var(--blue); }
+
+/* ══ ALERTS ══ */
+.alert {
+  border-radius: var(--r-sm);
+  padding: 9px 13px;
+  font-size: 12px;
+  margin-top: 10px;
+  line-height: 1.5;
+}
+.alert-warn { background: #FFFBEB; border: 1px solid #FDE68A; color: #78350F; }
+.alert-info { background: #EFF6FF; border: 1px solid #BFDBFE; color: #1E40AF; }
+.alert-err  { background: #FFF1F2; border: 1px solid #FECDD3; color: #9F1239; font-weight: 500; }
+
+/* ══ LAME TAG ══ */
+.lame-tag {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: #EFF6FF; border: 1px solid #BFDBFE;
+  border-radius: 7px; padding: 6px 11px;
+  font-size: 12px; color: #1E40AF; margin-top: 8px; font-weight: 500;
+}
+.lame-tag strong { font-weight: 700; }
+
+/* ══ PRICE PANEL ══ */
+.price-panel { position: sticky; top: 74px; }
+
+.price-card {
+  background: #fff;
+  border-radius: var(--r);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  border: 1px solid rgba(226,232,240,.5);
+}
+.price-head {
+  background: linear-gradient(110deg, var(--navy-d) 0%, var(--navy-l) 100%);
+  color: #fff;
+  padding: 14px 18px;
+  font-weight: 800;
+  font-size: 11px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  display: flex; align-items: center; gap: 10px;
+}
+.price-head-icon {
+  background: rgba(255,255,255,.15);
+  width: 28px; height: 28px;
+  border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px;
+}
+.price-lines {
+  padding: 12px 18px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+.price-lines::-webkit-scrollbar { width: 4px; }
+.price-lines::-webkit-scrollbar-track { background: transparent; }
+.price-lines::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+.price-empty {
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 40px 16px;
+  font-weight: 500;
+}
+
+.pline {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #F1F5F9;
+}
+.pline:last-child { border-bottom: none; }
+.pline-left { flex: 1; min-width: 0; }
+.pline-name { font-size: 12.5px; color: var(--text); line-height: 1.35; font-weight: 500; }
+.pline-ref  { font-size: 10px; color: var(--muted); font-family: ui-monospace, monospace; margin-top: 1px; }
+.pline-amt  { font-size: 13px; font-weight: 700; color: var(--text); white-space: nowrap; }
+.pline-devis { font-size: 11px; color: var(--muted); font-style: italic; }
+
+.price-footer {
+  padding: 14px 18px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.pf-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 5px 0; font-size: 13px; color: var(--text-2);
+}
+.pf-row.ht {
+  font-size: 15px; font-weight: 700; color: var(--navy);
+  border-top: 1.5px solid var(--border);
+  padding-top: 10px; margin-top: 6px;
+}
+.pf-row.ttc {
+  font-size: 18px; font-weight: 800; color: var(--navy);
+  background: linear-gradient(135deg, var(--blue-l) 0%, #E0EEFF 100%);
+  border: 1.5px solid #BFDBFE;
+  border-radius: 9px;
+  padding: 11px 14px;
+  margin-top: 10px;
+}
+.pf-muted { color: var(--muted); }
+
+.remise-wrap {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 0;
+  border-top: 1px dashed var(--border);
+  margin-top: 4px;
+}
+.remise-wrap label { font-size: 13px; flex: 1; color: var(--text-2); font-weight: 500; }
+.remise-wrap .ri { display: flex; align-items: center; gap: 4px; }
+.remise-wrap .ri input {
+  width: 64px;
+  border: 1.5px solid var(--border);
+  border-radius: 7px;
+  padding: 6px 8px;
+  font-size: 13px;
+  text-align: right;
+  background: #fff;
+  font-family: inherit;
+}
+.remise-wrap .ri input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 2px rgba(37,99,235,.12); }
+.remise-sign { font-size: 13px; color: var(--red); font-weight: 700; min-width: 84px; text-align: right; }
+
+.btn-print {
+  width: 100%;
+  margin-top: 14px;
+  padding: 12px;
+  background: var(--navy);
+  color: #fff;
+  border: none;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: .04em;
+  transition: all .2s ease;
+  font-family: inherit;
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+}
+.btn-print:hover { background: var(--navy-l); box-shadow: 0 4px 14px rgba(22,45,94,.32); transform: translateY(-1px); }
+.btn-print:active { transform: none; box-shadow: none; }
+
+/* ══ PRINT ══ */
+@media print {
+  body { background: #fff; }
+  header, .form-panel { display: none !important; }
+  .layout { display: block; padding: 0; }
+  .price-panel { position: static; }
+  .price-card { box-shadow: none; border: 1px solid #ccc; }
+  .price-lines { max-height: none; overflow: visible; }
+  .btn-print { display: none; }
+}
+
+@media (max-width: 860px) {
+  .layout { grid-template-columns: 1fr; }
+  .price-panel { position: static; }
+}
+</style>
+<style id="embed-style">
+  /* Masque le header propre quand l'appli tourne dans la coquille parent (?embedded=1) */
+  body.embedded > header { display: none !important; }
+  body.embedded > .tab-bar { top: 0 !important; }
+</style>
+<script>
+  if (new URLSearchParams(location.search).get('embedded') === '1') {
+    document.documentElement.classList.add('embedded-html');
+    document.addEventListener('DOMContentLoaded', () => document.body.classList.add('embedded'));
+  }
+</script>
+</head>
+<body>
+
+<header>
+  <div class="logo">JM</div>
+  <div>
+    <h1>JM BÂCHES — Configurateur Volet Hors-Sol Fixe</h1>
+    <p>Master Fixe · Silver Roll · Calcul automatique de prix</p>
+  </div>
+</header>
+
+<div class="layout">
+
+<!-- ══════════════════ FORM PANEL ══════════════════ -->
+<div class="form-panel">
+
+  <!-- 1. DIMENSIONS -->
+  <div class="card">
+    <div class="card-head"><span class="step-badge">1</span> Dimensions du bassin</div>
+    <div class="card-body">
+      <div class="form-row">
+        <div class="fg">
+          <label>AC — Longueur du bassin</label>
+          <div class="input-wrap">
+            <input type="number" id="ac" min="0.5" max="15" step="0.01" placeholder="ex : 8.00">
+            <span class="unit">m</span>
+          </div>
+        </div>
+        <div class="fg">
+          <label>AB — Largeur du bassin</label>
+          <div class="input-wrap">
+            <input type="number" id="ab" min="0.5" max="8" step="0.01" placeholder="ex : 4.00">
+            <span class="unit">m</span>
+          </div>
+        </div>
+      </div>
+      <div id="dim-alert" style="display:none;"></div>
+      <div id="lame-tag" style="display:none;"></div>
+    </div>
+  </div>
+
+  <!-- 2. LAMES -->
+  <div class="card">
+    <div class="card-head"><span class="step-badge">2</span> Type de lames</div>
+    <div class="card-body">
+      <div class="choices row">
+        <label class="choice sel" id="ch-pvc">
+          <input type="radio" name="lames" value="pvc" checked>
+          <div>
+            <div class="ch-title">PVC</div>
+            <div class="ch-ref">Blanc · Sable · Gris</div>
+          </div>
+        </label>
+        <label class="choice" id="ch-poly">
+          <input type="radio" name="lames" value="poly">
+          <div>
+            <div class="ch-title">Polycarbonate</div>
+            <div class="ch-ref">Gris nacré · Noir fumé · Bleu transparent</div>
+          </div>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. STRUCTURE -->
+  <div class="card">
+    <div class="card-head"><span class="step-badge">3</span> Structure / Moteur</div>
+    <div class="card-body">
+      <div class="choices" id="struct-choices">
+        <!-- rendered by JS -->
+      </div>
+      <div id="struct-alert" style="display:none;"></div>
+    </div>
+  </div>
+
+  <!-- 4. ALIMENTATION -->
+  <div class="card">
+    <div class="card-head"><span class="step-badge">4</span> Alimentation</div>
+    <div class="card-body">
+      <div class="choices">
+        <label class="choice sel">
+          <input type="radio" name="alim" value="none" checked>
+          <div>
+            <div class="ch-title">Alimentation électrique standard</div>
+            <div class="ch-price">Incluse dans la structure</div>
+          </div>
+        </label>
+        <label class="choice">
+          <input type="radio" name="alim" value="plug">
+          <div>
+            <div class="ch-title">Easy Plug &amp; Play</div>
+            <div class="ch-ref">ACVRPLUG</div>
+            <div class="ch-price">+ 429,50 €</div>
+          </div>
+        </label>
+        <label class="choice">
+          <input type="radio" name="alim" value="bat3">
+          <div>
+            <div class="ch-title">Batterie sans fil 24V — 3A</div>
+            <div class="ch-ref">ACVRALIBAT24V</div>
+            <div class="ch-price">+ 660,00 €</div>
+          </div>
+        </label>
+        <label class="choice">
+          <input type="radio" name="alim" value="bat6">
+          <div>
+            <div class="ch-title">Batterie sans fil 24V — 6A</div>
+            <div class="ch-ref">ACVRALIBAT6A</div>
+            <div class="ch-price">+ 720,00 €</div>
+          </div>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. FIXATION -->
+  <div class="card">
+    <div class="card-head"><span class="step-badge">5</span> Fixation</div>
+    <div class="card-body">
+      <div class="choices">
+        <label class="choice dis">
+          <input type="checkbox" checked disabled>
+          <div>
+            <div class="ch-title">Fixation standard sur margelle</div>
+            <div class="ch-price">Incluse</div>
+          </div>
+        </label>
+        <div>
+          <label class="choice" id="ch-sangle">
+            <input type="checkbox" id="cb-sangle">
+            <div style="flex:1; display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+              <div>
+                <div class="ch-title">Passe sangle / attaches sous margelles</div>
+                <div class="ch-ref">ACVRPASSANG · 59,35 €/unité</div>
+              </div>
+            </div>
+          </label>
+          <div id="sangle-qty-wrap" style="display:none; padding:8px 12px 10px; background:#F8F9FB; border:1.5px solid var(--navy); border-top:none; border-radius:0 0 8px 8px; margin-top:-4px;">
+            <div class="fg" style="width:120px;">
+              <label>Quantité</label>
+              <input type="number" id="sangle-qty" min="1" max="30" value="2">
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. ESCALIER -->
+  <div class="card">
+    <div class="card-head"><span class="step-badge">6</span> Escalier</div>
+    <div class="card-body">
+      <label class="toggle-row">
+        <input type="checkbox" id="cb-esc">
+        <span>Volet avec découpe escalier</span>
+      </label>
+
+      <div id="esc-details" style="display:none; margin-top:12px;">
+
+        <div class="sub">
+          <div class="sub-title">Type d'escalier</div>
+          <div class="choices row" id="esc-type-choices">
+            <label class="choice sel" data-v="droit">
+              <input type="radio" name="esc-type" value="droit" checked>
+              <div class="ch-title">Droit</div>
+            </label>
+            <label class="choice" data-v="roman">
+              <input type="radio" name="esc-type" value="roman">
+              <div class="ch-title">Roman</div>
+            </label>
+            <label class="choice" data-v="trapeze">
+              <input type="radio" name="esc-type" value="trapeze">
+              <div class="ch-title">Trapèze</div>
+            </label>
+            <label class="choice" data-v="libre">
+              <input type="radio" name="esc-type" value="libre">
+              <div class="ch-title">Forme libre</div>
+            </label>
+          </div>
+        </div>
+
+        <div class="sub" id="esc-finition-wrap" style="margin-top:8px;">
+          <div class="sub-title">Finition</div>
+          <div class="choices row">
+            <label class="choice sel" data-v="equerre">
+              <input type="radio" name="esc-fin" value="equerre" checked>
+              <div>
+                <div class="ch-title">Équerre</div>
+                <div class="ch-ref">Découpe droite</div>
+              </div>
+            </label>
+            <label class="choice" data-v="forme" id="fin-forme-opt">
+              <input type="radio" name="esc-fin" value="forme">
+              <div>
+                <div class="ch-title">En forme</div>
+                <div class="ch-ref">Découpe lisse</div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div class="sub" id="esc-taille-wrap" style="margin-top:8px;">
+          <div class="sub-title">Dimensions</div>
+          <div class="choices" id="esc-taille-choices"><!-- JS --></div>
+        </div>
+
+        <div id="esc-alert" style="display:none;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 7. OPTIONS -->
+  <div class="card">
+    <div class="card-head"><span class="step-badge">7</span> Options</div>
+    <div class="card-body">
+      <div class="choices">
+        <label class="choice" id="ch-decoupe">
+          <input type="checkbox" id="cb-decoupe">
+          <div>
+            <div class="ch-title">Découpe pour bloc / mur filtrant</div>
+            <div class="ch-ref">VRDECBLOC · 248,00 €</div>
+          </div>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- 8. SEL -->
+  <div class="card">
+    <div class="card-head"><span class="step-badge">8</span> Sel / Électrolyse</div>
+    <div class="card-body">
+      <div class="choices row">
+        <label class="choice sel">
+          <input type="radio" name="sel-yn" value="non" checked>
+          <div class="ch-title">Non</div>
+        </label>
+        <label class="choice">
+          <input type="radio" name="sel-yn" value="oui">
+          <div class="ch-title">Oui</div>
+        </label>
+      </div>
+      <div id="sel-options" style="display:none;" class="sub" style="margin-top:8px;">
+        <div class="sub-title">Option sel</div>
+        <div class="choices">
+          <label class="choice" id="ch-oxeo">
+            <input type="checkbox" id="cb-oxeo">
+            <div>
+              <div class="ch-title">OXEO — sans contact volet</div>
+              <div class="ch-ref">ACCOFASSEROXEO · 214,60 €</div>
+            </div>
+          </label>
+          <label class="choice" id="ch-asser">
+            <input type="checkbox" id="cb-asser">
+            <div>
+              <div class="ch-title">Asservissement électrolyseur — coupure (SIREM)</div>
+              <div class="ch-ref">ACVRCOFASSER · 185,25 €</div>
+            </div>
+          </label>
+        </div>
+        <div id="sel-alert" style="display:none;" class="alert alert-warn" style="margin-top:8px;">
+          OXEO et coupure électrolyse sont habituellement exclusifs — vérifiez la sélection.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 9. EMBALLAGE -->
+  <div class="card">
+    <div class="card-head"><span class="step-badge">9</span> Emballage</div>
+    <div class="card-body">
+      <div class="choices row">
+        <label class="choice">
+          <input type="radio" name="emb-yn" value="non">
+          <div class="ch-title">Non</div>
+        </label>
+        <label class="choice sel">
+          <input type="radio" name="emb-yn" value="oui" checked>
+          <div>
+            <div class="ch-title">Oui</div>
+            <div class="ch-ref">EMB · 96,00 €</div>
+          </div>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <!-- 10. TRANSPORT -->
+  <div class="card">
+    <div class="card-head"><span class="step-badge">10</span> Transport / Installation</div>
+    <div class="card-body">
+      <div class="choices">
+        <label class="choice sel" id="ch-trsp-none">
+          <input type="radio" name="transport" value="none" checked>
+          <div>
+            <div class="ch-title">Sans livraison / Enlèvement sur place</div>
+            <div class="ch-price">—</div>
+          </div>
+        </label>
+        <label class="choice" id="ch-trsp-seul">
+          <input type="radio" name="transport" value="seul">
+          <div>
+            <div class="ch-title">Transport seul (livraison France)</div>
+            <div class="ch-ref">Prix selon zone et largeur bassin</div>
+          </div>
+        </label>
+        <label class="choice" id="ch-trsp-install">
+          <input type="radio" name="transport" value="install">
+          <div>
+            <div class="ch-title">Transport + Installation</div>
+            <div class="ch-ref">Prix selon département</div>
+          </div>
+        </label>
+      </div>
+
+      <!-- Transport seul : choix de zone -->
+      <div id="trsp-seul-wrap" style="display:none;" class="sub" style="margin-top:8px;">
+        <div class="sub-title">Zone de livraison</div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+          <div class="fg" style="max-width:140px;">
+            <label>N° département (auto-détection)</label>
+            <input type="number" id="inp-dept-zone" min="1" max="95" step="1" placeholder="ex : 26">
+          </div>
+          <div id="zone-detected" style="font-size:12px;color:var(--muted);margin-top:16px;"></div>
+        </div>
+        <div id="trsp-zone-info" style="margin-bottom:8px;"></div>
+        <div class="choices" id="trsp-zone-choices">
+          <label class="choice sel">
+            <input type="radio" name="trsp-zone" value="std" checked>
+            <div style="flex:1;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;">
+                <div class="ch-title">France standard</div>
+                <span class="ch-price" id="p-trsp-std">—</span>
+              </div>
+              <div class="ch-ref">TRSPVR5 / TRSPVR6</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:3px;line-height:1.4;">Dép. 01 07 26 38 42 43 63 69</div>
+            </div>
+          </label>
+          <label class="choice">
+            <input type="radio" name="trsp-zone" value="SE">
+            <div style="flex:1;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;">
+                <div class="ch-title">Sud-Est</div>
+                <span class="ch-price" id="p-trsp-SE">—</span>
+              </div>
+              <div class="ch-ref">TRSPVR5SE / TRSPVR6SE</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:3px;line-height:1.4;">Dép. 04 05 06 11 12 13 30 34 48 66 73 74 83 84</div>
+            </div>
+          </label>
+          <label class="choice">
+            <input type="radio" name="trsp-zone" value="SO">
+            <div style="flex:1;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;">
+                <div class="ch-title">Sud-Ouest</div>
+                <span class="ch-price" id="p-trsp-SO">—</span>
+              </div>
+              <div class="ch-ref">TRSPVR5SO / TRSPVR6SO</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:3px;line-height:1.4;">Dép. 09 15 16 17 19 23 24 31 32 33 36 37 40 41 44 46 47 49 64 65 72 79 81 82 85 86 87</div>
+            </div>
+          </label>
+          <label class="choice">
+            <input type="radio" name="trsp-zone" value="N">
+            <div style="flex:1;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;">
+                <div class="ch-title">Nord / Ouest</div>
+                <span class="ch-price" id="p-trsp-N">—</span>
+              </div>
+              <div class="ch-ref">TRSPVR5N / TRSPVR6N</div>
+              <div style="font-size:10px;color:var(--muted);margin-top:3px;line-height:1.4;">Dép. 02 03 08 10 14 18 21 22 25 27 28 29 35 39 45 50 51 52 53 54 55 56 57 58 59 60 61 62 67 68 70 71 75 76 77 78 80 88 89 90 91 92 93 94 95</div>
+            </div>
+          </label>
+        </div>
+        <div class="alert alert-info" style="margin-top:8px;">
+          🏝 <strong>Corse (2A, 2B)</strong> — transport sur devis (TRSPVRAFFRET)
+        </div>
+        <div id="trsp-seul-alert" style="display:none;" class="alert alert-warn" style="margin-top:8px;"></div>
+      </div>
+
+      <!-- Transport + installation : saisie département -->
+      <div id="trsp-install-wrap" style="display:none;" class="sub" style="margin-top:8px;">
+        <div class="sub-title">Département de livraison</div>
+        <div class="fg" style="max-width:160px; margin-bottom:8px;">
+          <label>N° département</label>
+          <input type="number" id="inp-dept" min="1" max="976" step="1" placeholder="ex : 26">
+        </div>
+        <div id="trsp-install-price" style="font-size:13px; color:var(--muted);"></div>
+        <div id="trsp-install-alert" style="display:none;" class="alert alert-warn" style="margin-top:6px;"></div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /form-panel -->
+
+
+<!-- ══════════════════ PRICE PANEL ══════════════════ -->
+<div class="price-panel">
+  <div class="price-card">
+    <div class="price-head">Récapitulatif de prix</div>
+
+    <div class="price-lines" id="price-lines">
+      <div class="price-empty">Saisissez les dimensions pour commencer</div>
+    </div>
+
+    <div class="price-footer" id="price-footer" style="display:none;">
+
+      <div class="pf-row">
+        <span class="pf-muted">Sous-total HT</span>
+        <span id="val-subtotal">—</span>
+      </div>
+
+      <div class="remise-wrap">
+        <label for="inp-remise">Remise</label>
+        <div class="ri">
+          <input type="number" id="inp-remise" min="0" max="100" step="0.5" value="0">
+          <span style="font-size:13px;">%</span>
+        </div>
+        <span class="remise-sign" id="val-remise">— €</span>
+      </div>
+
+      <div class="pf-row ht">
+        <span>Total HT</span>
+        <span id="val-ht">—</span>
+      </div>
+      <div class="pf-row pf-muted" style="font-size:12px;">
+        <span>TVA 20 %</span>
+        <span id="val-tva">—</span>
+      </div>
+      <div class="pf-row ttc">
+        <span>Total TTC</span>
+        <span id="val-ttc">—</span>
+      </div>
+
+      <button class="btn-print" onclick="window.print()">🖨 Imprimer le récapitulatif</button>
+    </div>
+  </div>
+</div>
+
+</div><!-- /layout -->
+
+<script>
+/* ═══════════════════════════════════════════
+   DONNÉES TARIFAIRES 2026
+═══════════════════════════════════════════ */
+const D = {
+  structures: [
+    { ref:'VRSIL80S',   label:'Bassin 3m à 4m — fin de course mécanique (80S)',         prix:1945.77, abMin:3, abMax:4, acMax:8,  tag:'AB 3–4m · AC ≤ 8m' },
+    { ref:'VRSILC120',  label:'Bassin 4m à 5m — fin de course mécanique (C120)',         prix:2237.50, abMin:4, abMax:5, acMax:10, tag:'AB 4–5m · AC ≤ 10m' },
+    { ref:'VRSIL200S',  label:'Bassin 4,01m à 6m — fin de course électronique (200S)',   prix:2845.25, abMin:4, abMax:6, acMax:null,tag:'AB 4–6m · AC illimité' },
+    { ref:'VRSIL120BD', label:'Bassin max 5×10m — débrayable (120BD)',                   prix:3458.45, abMin:0, abMax:5, acMax:10, tag:'AB ≤ 5m · AC ≤ 10m' },
+  ],
+
+  lamesPVC: [
+    {ref:'LAM3',   L:3,   p:219.41},
+    {ref:'LAM350', L:3.5, p:248.53},
+    {ref:'LAM4',   L:4,   p:277.65},
+    {ref:'LAM450', L:4.5, p:306.75},
+    {ref:'LAM5',   L:5,   p:335.87},
+    {ref:'LAM550', L:5.5, p:364.99},
+    {ref:'LAM6',   L:6,   p:394.10},
+    {ref:'LAM650', L:6.5, p:435.99},
+    {ref:'LAM7',   L:7,   p:464.70},
+    {ref:'LAM750', L:7.5, p:495.52},
+    {ref:'LAM8',   L:8,   p:531.08},
+  ],
+  lamesPoly: [
+    {ref:'LAMPOL3',   L:3,   p:449.99},
+    {ref:'LAMPOL350', L:3.5, p:513.34},
+    {ref:'LAMPOL4',   L:4,   p:576.70},
+    {ref:'LAMPOL450', L:4.5, p:640.06},
+    {ref:'LAMPOL5',   L:5,   p:703.41},
+    {ref:'LAMPOL550', L:5.5, p:766.77},
+    {ref:'LAMPOL6',   L:6,   p:830.12},
+    {ref:'LAMPOL650', L:6.5, p:919.32},
+    {ref:'LAMPOL7',   L:7,   p:981.22},
+    {ref:'LAMPOL750', L:7.5, p:1043.12},
+    {ref:'LAMPOL8',   L:8,   p:1105.02},
+  ],
+
+  alims: {
+    none: {label:'Alimentation électrique standard', prix:0},
+    plug: {ref:'ACVRPLUG',     label:'Easy Plug & Play',         prix:429.50},
+    bat3: {ref:'ACVRALIBAT24V',label:'Batterie sans fil 24V 3A', prix:660.00},
+    bat6: {ref:'ACVRALIBAT6A', label:'Batterie sans fil 24V 6A', prix:720.00},
+  },
+
+  escaliers: {
+    droit: {
+      equerre:[
+        {ref:'VRESDR2150E', label:'Droit équerre ≤ 2m × 1,5m', prix:324.50},
+        {ref:'VRESDR2502E', label:'Droit équerre ≤ 2,5m × 2m',  prix:423.50},
+      ],
+      forme: null,
+    },
+    roman: {
+      equerre:[
+        {ref:'VRESRO3E', label:'Roman équerre ≤ 3m', prix:490.60},
+        {ref:'VRESRO4E', label:'Roman équerre ≤ 4m', prix:649.00},
+      ],
+      forme:[
+        {ref:'VRESRO3F', label:'Roman en forme ≤ 3m', prix:685.30},
+        {ref:'VRESRO4F', label:'Roman en forme ≤ 4m', prix:959.20},
+      ],
+    },
+    trapeze: {
+      equerre:[
+        {ref:'VRESTRAP3E', label:'Trapèze équerre ≤ 3m', prix:530.20},
+        {ref:'VRESTRAP4E', label:'Trapèze équerre ≤ 4m', prix:696.30},
+      ],
+      forme:[
+        {ref:'VRESTRAP3F', label:'Trapèze en forme ≤ 3m', prix:755.70},
+        {ref:'VRESTRAP4F', label:'Trapèze en forme ≤ 4m', prix:1028.50},
+      ],
+    },
+    libre: { equerre:null, forme:null },
+  },
+
+  trspSeul: {
+    std: { ref:'TRSPVR5/TRSPVR6',    label:'France standard', p5:225, p6:260,
+      depts:[1,7,26,38,42,43,63,69] },
+    SE:  { ref:'TRSPVR5SE/TRSPVR6SE',label:'Sud-Est',          p5:300, p6:345,
+      depts:[4,5,6,11,12,13,30,34,48,66,73,74,83,84] },
+    SO:  { ref:'TRSPVR5SO/TRSPVR6SO',label:'Sud-Ouest',         p5:375, p6:415,
+      depts:[9,15,16,17,19,23,24,31,32,33,36,37,40,41,44,46,47,49,64,65,72,79,81,82,85,86,87] },
+    N:   { ref:'TRSPVR5N/TRSPVR6N',  label:'Nord / Ouest',      p5:395, p6:445,
+      depts:[2,3,8,10,14,18,21,22,25,27,28,29,35,39,45,50,51,52,53,54,55,56,57,58,59,60,61,62,67,68,70,71,75,76,77,78,80,88,89,90,91,92,93,94,95] },
+  },
+
+  // Livraison + installation hors-sol par département (prix HT)
+  trspInstall: {
+    1:889.10,  2:1430.05, 3:996.22,  4:776.62,  5:776.62,  6:889.10,  7:776.62,  8:1430.05,
+    9:1103.34, 10:1215.81,11:996.22, 12:996.22, 13:889.10, 14:1430.05,15:996.22, 16:1215.81,
+    17:1322.93,18:1215.81,19:1103.34,21:1103.34,22:1430.05,23:1103.34,24:1215.81,25:1103.34,
+    26:562.38, 27:1430.05,28:1322.93,29:1430.05,30:776.62, 31:996.22, 32:1103.34,33:1215.81,
+    34:889.10, 35:1430.05,36:1215.81,37:1322.93,38:776.62, 39:996.22, 40:1215.81,41:1215.81,
+    42:776.62, 43:889.10, 44:1215.81,45:1215.81,46:1103.34,47:1215.81,48:889.10, 49:1430.05,
+    50:1430.05,51:1322.93,52:1215.81,53:1430.05,54:1322.93,55:1322.93,56:1430.05,57:1322.93,
+    58:1103.34,59:1430.05,60:1430.05,61:1430.05,62:1430.05,63:996.22, 64:1215.81,65:1103.34,
+    66:996.22, 67:1322.93,68:1215.81,69:776.62, 70:1103.34,71:889.10, 72:1430.05,73:889.10,
+    74:889.10, 75:1322.93,76:1430.05,77:1322.93,78:1322.93,79:1322.93,80:1430.05,81:996.22,
+    82:1103.34,83:889.10, 84:776.62, 85:1430.05,86:1215.81,87:1215.81,88:1215.81,89:1215.81,
+    90:1322.93,91:1322.93,92:1322.93,93:1322.93,94:1322.93,95:1322.93,
+    BE:1315.00,
+  },
+};
+
+/* ═══════════════════════════════════════════
+   HELPERS
+═══════════════════════════════════════════ */
+const fmt = n => new Intl.NumberFormat('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2}).format(n) + ' €';
+
+function getLame(ab, type) {
+  const table = type === 'poly' ? D.lamesPoly : D.lamesPVC;
+  return table.find(l => l.L >= ab) || null;
+}
+
+function isCompatible(s, ab, ac) {
+  if (ab && (ab < s.abMin || ab > s.abMax)) return false;
+  if (ac && s.acMax && ac > s.acMax) return false;
+  return true;
+}
+
+function suggestStruct(ab, ac) {
+  // Suggère le moteur le moins cher compatible avec AB et AC
+  const ordre = ['VRSIL80S', 'VRSILC120', 'VRSIL200S', 'VRSIL120BD'];
+  for (const ref of ordre) {
+    const s = D.structures.find(x => x.ref === ref);
+    if (isCompatible(s, ab, ac)) return ref;
+  }
+  return 'VRSIL200S';
+}
+
+function v(id)  { return document.getElementById(id); }
+function q(sel) { return document.querySelector(sel); }
+function qa(sel){ return document.querySelectorAll(sel); }
+
+/* ═══════════════════════════════════════════
+   RENDER STRUCTURES
+═══════════════════════════════════════════ */
+function renderStructures() {
+  const ab = parseFloat(v('ab').value);
+  const ac = parseFloat(v('ac').value);
+  const hasDims = !isNaN(ab) && !isNaN(ac);
+  const suggested = hasDims ? suggestStruct(ab, ac) : (!isNaN(ab) ? suggestStruct(ab, null) : null);
+  const container = v('struct-choices');
+
+  // Garde la sélection courante si encore compatible
+  const current = q('input[name=struct]:checked')?.value;
+
+  const currentStruct = D.structures.find(x => x.ref === current);
+  const currentValid = current && (!hasDims || isCompatible(currentStruct, ab, ac));
+  const toCheck = currentValid ? current : suggested;
+
+  container.innerHTML = D.structures.map(s => {
+    const compat = hasDims ? isCompatible(s, ab, ac) : true;
+    const isSuggested = s.ref === suggested;
+    const isChecked = s.ref === toCheck;
+
+    let badge = '';
+    if (isSuggested) badge = '<span class="ch-badge">Suggéré</span>';
+    else if (hasDims && !compat) badge = '<span style="font-size:10px;background:#FEE2E2;color:#991B1B;padding:1px 6px;border-radius:10px;font-weight:600;">Hors limites</span>';
+
+    return `
+      <label class="choice${isChecked ? ' sel' : ''}${hasDims && !compat ? ' incompat' : ''}" data-ref="${s.ref}">
+        <input type="radio" name="struct" value="${s.ref}" ${isChecked ? 'checked' : ''}>
+        <div style="flex:1;">
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            <span class="ch-title">${s.label}</span>
+            ${badge}
+          </div>
+          <div style="display:flex;gap:12px;margin-top:2px;">
+            <span class="ch-ref">${s.ref}</span>
+            <span style="font-size:10px;color:${hasDims && !compat ? 'var(--red)' : 'var(--muted)'};">${s.tag}</span>
+          </div>
+          <div class="ch-price">${fmt(s.prix)}</div>
+        </div>
+      </label>
+    `;
+  }).join('');
+
+  bindChoices('#struct-choices [type=radio]', calculate);
+
+  // Avertissement si moteur sélectionné hors limites
+  const selStruct = D.structures.find(s => s.ref === q('input[name=struct]:checked')?.value);
+  const structAlert = v('struct-alert');
+  if (hasDims && selStruct && !isCompatible(selStruct, ab, ac)) {
+    structAlert.className = 'alert alert-err';
+    structAlert.textContent = `Attention : ${selStruct.ref} n'est pas adapté à ces dimensions (AB=${ab}m, AC=${ac}m). Le moteur suggéré a été sélectionné automatiquement.`;
+    structAlert.style.display = 'block';
+  } else {
+    structAlert.style.display = 'none';
+  }
+}
+
+/* ═══════════════════════════════════════════
+   RENDER ESCALIER SIZES
+═══════════════════════════════════════════ */
+function renderEscTailles() {
+  const type = q('input[name=esc-type]:checked')?.value;
+  const fin  = q('input[name=esc-fin]:checked')?.value || 'equerre';
+  const alert = v('esc-alert');
+  const finWrap = v('esc-finition-wrap');
+  const talWrap = v('esc-taille-wrap');
+  const finForme = v('fin-forme-opt');
+  const poly = q('input[name=lames]:checked')?.value === 'poly';
+
+  alert.style.display = 'none';
+
+  if (type === 'libre') {
+    finWrap.style.display = 'none';
+    talWrap.style.display = 'none';
+    alert.className = 'alert alert-info';
+    alert.textContent = 'Escalier forme libre : prix sur devis. Contactez-nous.';
+    alert.style.display = 'block';
+    return;
+  }
+
+  finWrap.style.display = 'block';
+  talWrap.style.display = 'block';
+
+  // Droit n'a pas de finition "en forme"
+  if (type === 'droit') {
+    finForme.classList.add('dis');
+    const eqInput = q('input[name=esc-fin][value=equerre]');
+    if (eqInput) { eqInput.checked = true; syncChoices('input[name=esc-fin]'); }
+  } else {
+    finForme.classList.remove('dis');
+  }
+
+  const escData = D.escaliers[type];
+  const finKey  = (type === 'droit') ? 'equerre' : fin;
+  const tailles = escData[finKey];
+
+  if (!tailles) {
+    v('esc-taille-choices').innerHTML = '<div style="color:var(--muted);font-size:13px;">Sur devis</div>';
+    return;
+  }
+
+  v('esc-taille-choices').innerHTML = tailles.map((t, i) => {
+    const pEsc = poly ? t.prix * 1.35 : t.prix;
+    return `
+      <label class="choice${i === 0 ? ' sel' : ''}" data-ref="${t.ref}">
+        <input type="radio" name="esc-taille" value="${t.ref}" ${i === 0 ? 'checked' : ''}>
+        <div style="flex:1;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+          <div>
+            <span class="ch-title">${t.label}</span>
+            <div class="ch-ref">${t.ref}${poly ? ' · +35% polycarbonate' : ''}</div>
+          </div>
+          <span class="ch-price">${fmt(pEsc)}</span>
+        </div>
+      </label>
+    `;
+  }).join('');
+
+  bindChoices('#esc-taille-choices [type=radio]', calculate);
+}
+
+/* ═══════════════════════════════════════════
+   SYNC CHOICE STYLES
+═══════════════════════════════════════════ */
+function syncChoices(radioSel) {
+  qa(radioSel).forEach(r => {
+    const lbl = r.closest('.choice');
+    if (lbl) lbl.classList.toggle('sel', r.checked);
+  });
+}
+function syncCheckbox(id, lblId) {
+  const cb = v(id); const lbl = v(lblId);
+  if (cb && lbl) lbl.classList.toggle('sel', cb.checked);
+}
+
+function bindChoices(sel, cb) {
+  qa(sel).forEach(r => r.addEventListener('change', () => {
+    syncChoices(sel);
+    if (cb) cb();
+  }));
+}
+
+/* ═══════════════════════════════════════════
+   CALCULATE
+═══════════════════════════════════════════ */
+function calculate() {
+  const ac  = parseFloat(v('ac').value);
+  const ab  = parseFloat(v('ab').value);
+  const typ = q('input[name=lames]:checked')?.value || 'pvc';
+  const str = q('input[name=struct]:checked')?.value;
+  const alm = q('input[name=alim]:checked')?.value || 'none';
+
+  // dimensions alert
+  const dimAlert = v('dim-alert');
+  const lameTag  = v('lame-tag');
+  dimAlert.style.display = 'none';
+  lameTag.style.display  = 'none';
+
+  if (!ac || !ab || isNaN(ac) || isNaN(ab)) { renderEmpty(); return; }
+
+  const lameRef = getLame(ab, typ);
+  if (!lameRef) {
+    dimAlert.className = 'alert alert-err';
+    dimAlert.textContent = `AB = ${ab}m dépasse la largeur maximale de lame disponible (8m). Contactez-nous.`;
+    dimAlert.style.display = 'block';
+    renderEmpty(); return;
+  }
+
+  // Show lame ref tag
+  lameTag.style.display = 'inline-flex';
+  lameTag.className = 'lame-tag';
+  lameTag.innerHTML = `Lame sélectionnée : <strong>${lameRef.ref}</strong> (${lameRef.L}m) &mdash; <strong>${fmt(lameRef.p)}/ml</strong>`;
+
+  const lines = [];
+
+  // Lames
+  lines.push({ name:`Lames ${typ==='poly'?'Polycarbonate':'PVC'} ${lameRef.L}m × ${ac} ml`, ref:lameRef.ref, prix: lameRef.p * ac });
+
+  // Structure
+  const sData = D.structures.find(s => s.ref === str);
+  if (sData) lines.push({ name:sData.label, ref:sData.ref, prix:sData.prix });
+
+  // Alim
+  const aData = D.alims[alm];
+  if (aData && aData.prix > 0) lines.push({ name:aData.label, ref:aData.ref, prix:aData.prix });
+
+  // Sangle
+  if (v('cb-sangle').checked) {
+    const qty = parseInt(v('sangle-qty').value) || 1;
+    lines.push({ name:`Passe sangle sous margelles × ${qty}`, ref:'ACVRPASSANG', prix: 59.35 * qty });
+  }
+
+  // Escalier
+  if (v('cb-esc').checked) {
+    const escType = q('input[name=esc-type]:checked')?.value;
+    const escFin  = q('input[name=esc-fin]:checked')?.value || 'equerre';
+    const escTaille = q('input[name=esc-taille]:checked')?.value;
+
+    if (escType === 'libre') {
+      lines.push({ name:'Escalier forme libre', ref:'—', devis:true });
+    } else if (escTaille) {
+      const finKey = escType === 'droit' ? 'equerre' : escFin;
+      const tailles = D.escaliers[escType]?.[finKey];
+      const t = tailles?.find(x => x.ref === escTaille);
+      if (t) {
+        const pEsc = typ === 'poly' ? t.prix * 1.35 : t.prix;
+        lines.push({ name:`${t.label}${typ==='poly' ? ' (+35% poly)' : ''}`, ref:t.ref, prix:pEsc });
+      }
+    }
+  }
+
+  // Découpe bloc
+  if (v('cb-decoupe').checked) lines.push({ name:'Découpe bloc / mur filtrant', ref:'VRDECBLOC', prix:248.00 });
+
+  // Sel
+  if (q('input[name=sel-yn]:checked')?.value === 'oui') {
+    if (v('cb-oxeo').checked)  lines.push({ name:'Option sel OXEO', ref:'ACCOFASSEROXEO', prix:214.60 });
+    if (v('cb-asser').checked) lines.push({ name:'Asservissement électrolyseur (SIREM)', ref:'ACVRCOFASSER', prix:185.25 });
+    v('sel-alert').style.display = (v('cb-oxeo').checked && v('cb-asser').checked) ? 'block' : 'none';
+  } else {
+    v('sel-alert').style.display = 'none';
+  }
+
+  // Emballage
+  if (q('input[name=emb-yn]:checked')?.value === 'oui') lines.push({ name:'Emballage standard', ref:'EMB', prix:96.00 });
+
+  // Transport
+  const trspMode = q('input[name=transport]:checked')?.value || 'none';
+  if (trspMode === 'seul') {
+    const zone = q('input[name=trsp-zone]:checked')?.value || 'std';
+    const zData = D.trspSeul[zone];
+    if (ab > 6) {
+      lines.push({ name:`Transport ${zData.label} — AB > 6m`, ref:'TRSPVRAFFRET', devis:true });
+    } else {
+      const prix = ab <= 5 ? zData.p5 : zData.p6;
+      const bracket = ab <= 5 ? '≤ 5m' : '5,01–6m';
+      lines.push({ name:`Transport ${zData.label} (AB ${bracket})`, ref:zData.ref.split('/')[ab<=5?0:1], prix });
+    }
+  } else if (trspMode === 'install') {
+    const dept = v('inp-dept').value.trim().toUpperCase();
+    const deptNum = parseInt(dept);
+    const key = dept === 'BE' ? 'BE' : deptNum;
+    const prix = D.trspInstall[key];
+    if (prix !== undefined) {
+      lines.push({ name:`Livraison + installation (dép. ${dept})`, ref:'TRSPINSTALL', prix });
+    } else if (dept) {
+      lines.push({ name:`Livraison + installation (dép. ${dept})`, ref:'—', devis:true });
+    }
+  }
+
+  renderPrices(lines);
+}
+
+function renderEmpty() {
+  v('price-lines').innerHTML = '<div class="price-empty">Saisissez les dimensions pour commencer</div>';
+  v('price-footer').style.display = 'none';
+}
+
+function renderPrices(lines) {
+  const remisePct = parseFloat(v('inp-remise').value) || 0;
+
+  v('price-lines').innerHTML = lines.map(l => `
+    <div class="pline">
+      <div class="pline-left">
+        <div class="pline-name">${l.name}</div>
+        <div class="pline-ref">${l.ref}</div>
+      </div>
+      <div class="pline-amt">
+        ${l.devis ? '<span class="pline-devis">sur devis</span>' : fmt(l.prix)}
+      </div>
+    </div>
+  `).join('');
+
+  const sub      = lines.filter(l => l.prix > 0).reduce((a, l) => a + l.prix, 0);
+  const remiseAmt = sub * remisePct / 100;
+  const ht       = sub - remiseAmt;
+  const tva      = ht * 0.20;
+  const ttc      = ht + tva;
+
+  v('val-subtotal').textContent = fmt(sub);
+  v('val-remise').textContent   = remisePct > 0 ? '− ' + fmt(remiseAmt) : '—';
+  v('val-ht').textContent       = fmt(ht);
+  v('val-tva').textContent      = fmt(tva);
+  v('val-ttc').textContent      = fmt(ttc);
+
+  v('price-footer').style.display = 'block';
+}
+
+/* ═══════════════════════════════════════════
+   INIT
+═══════════════════════════════════════════ */
+(function init() {
+  renderStructures();
+  renderEscTailles();
+
+  // Dimensions
+  ['ac','ab'].forEach(id => v(id).addEventListener('input', () => {
+    renderStructures();
+    updateTrspZonePrices();
+    const ab = parseFloat(v('ab').value);
+    if (!isNaN(ab)) {
+      const typ = q('input[name=lames]:checked')?.value || 'pvc';
+      const l = getLame(ab, typ);
+      const tag = v('lame-tag');
+      if (l) {
+        tag.style.display = 'inline-flex';
+        tag.className = 'lame-tag';
+        tag.innerHTML = `Lame sélectionnée : <strong>${l.ref}</strong> (${l.L}m) &mdash; <strong>${fmt(l.p)}/ml</strong>`;
+      }
+    }
+    calculate();
+  }));
+
+  // Lames type
+  qa('input[name=lames]').forEach(r => r.addEventListener('change', () => {
+    syncChoices('input[name=lames]');
+    renderEscTailles();
+    calculate();
+  }));
+
+  // Alimentation
+  bindChoices('input[name=alim]', calculate);
+
+  // Sangle
+  v('cb-sangle').addEventListener('change', function() {
+    syncCheckbox('cb-sangle','ch-sangle');
+    v('sangle-qty-wrap').style.display = this.checked ? 'block' : 'none';
+    calculate();
+  });
+  v('sangle-qty').addEventListener('input', calculate);
+
+  // Escalier toggle
+  v('cb-esc').addEventListener('change', function() {
+    v('esc-details').style.display = this.checked ? 'block' : 'none';
+    calculate();
+  });
+
+  // Escalier type
+  qa('input[name=esc-type]').forEach(r => r.addEventListener('change', () => {
+    syncChoices('input[name=esc-type]');
+    renderEscTailles();
+    calculate();
+  }));
+
+  // Escalier finition
+  qa('input[name=esc-fin]').forEach(r => r.addEventListener('change', () => {
+    syncChoices('input[name=esc-fin]');
+    renderEscTailles();
+    calculate();
+  }));
+
+  // Sel oui/non
+  qa('input[name=sel-yn]').forEach(r => r.addEventListener('change', () => {
+    syncChoices('input[name=sel-yn]');
+    v('sel-options').style.display = q('input[name=sel-yn]:checked')?.value === 'oui' ? 'block' : 'none';
+    calculate();
+  }));
+
+  // Emballage oui/non
+  qa('input[name=emb-yn]').forEach(r => r.addEventListener('change', () => {
+    syncChoices('input[name=emb-yn]');
+    calculate();
+  }));
+
+  // Checkboxes sel (options internes)
+  ['cb-decoupe','cb-oxeo','cb-asser'].forEach(id => {
+    const lblMap = {'cb-decoupe':'ch-decoupe','cb-oxeo':'ch-oxeo','cb-asser':'ch-asser'};
+    v(id).addEventListener('change', function() {
+      syncCheckbox(id, lblMap[id]);
+      calculate();
+    });
+  });
+
+  // Remise
+  v('inp-remise').addEventListener('input', calculate);
+
+  // Transport
+  qa('input[name=transport]').forEach(r => r.addEventListener('change', () => {
+    syncChoices('input[name=transport]');
+    const mode = q('input[name=transport]:checked')?.value || 'none';
+    v('trsp-seul-wrap').style.display    = mode === 'seul'    ? 'block' : 'none';
+    v('trsp-install-wrap').style.display = mode === 'install' ? 'block' : 'none';
+    updateTrspZonePrices();
+    calculate();
+  }));
+
+  qa('input[name=trsp-zone]').forEach(r => r.addEventListener('change', () => {
+    syncChoices('input[name=trsp-zone]');
+    calculate();
+  }));
+
+  // Auto-détection zone depuis département
+  v('inp-dept-zone').addEventListener('input', () => {
+    const dept = parseInt(v('inp-dept-zone').value);
+    const detected = v('zone-detected');
+    if (isNaN(dept) || dept <= 0) { detected.textContent = ''; return; }
+    const zoneKey = Object.keys(D.trspSeul).find(k => D.trspSeul[k].depts.includes(dept));
+    if (zoneKey) {
+      const radio = q(`input[name=trsp-zone][value=${zoneKey}]`);
+      if (radio) { radio.checked = true; syncChoices('input[name=trsp-zone]'); }
+      detected.innerHTML = `→ Zone <strong>${D.trspSeul[zoneKey].label}</strong> sélectionnée`;
+      detected.style.color = 'var(--green)';
+    } else {
+      detected.textContent = `Département ${dept} non trouvé dans les zones.`;
+      detected.style.color = 'var(--red)';
+    }
+    updateTrspZonePrices();
+    calculate();
+  });
+
+  v('inp-dept').addEventListener('input', () => {
+    const dept = v('inp-dept').value.trim().toUpperCase();
+    const key = dept === 'BE' ? 'BE' : parseInt(dept);
+    const prix = D.trspInstall[key];
+    const infoEl = v('trsp-install-price');
+    const alertEl = v('trsp-install-alert');
+    if (dept === '') {
+      infoEl.textContent = '';
+      alertEl.style.display = 'none';
+    } else if (prix !== undefined) {
+      infoEl.innerHTML = `Livraison + installation hors-sol : <strong>${fmt(prix)}</strong> HT`;
+      alertEl.style.display = 'none';
+    } else {
+      infoEl.textContent = '';
+      alertEl.className = 'alert alert-warn';
+      alertEl.textContent = `Département « ${dept} » non trouvé dans le tarif. Prix sur devis.`;
+      alertEl.style.display = 'block';
+    }
+    calculate();
+  });
+})();
+
+function updateTrspZonePrices() {
+  const ab = parseFloat(v('ab').value);
+  const bracket = (!isNaN(ab) && ab > 5 && ab <= 6) ? 'p6' : 'p5';
+  const infoEl = v('trsp-zone-info');
+  if (!isNaN(ab)) {
+    if (ab > 6) {
+      infoEl.innerHTML = '<span style="color:var(--red);font-size:12px;">AB > 6m : transport sur devis (affrètement)</span>';
+    } else {
+      infoEl.innerHTML = `<span style="font-size:12px;color:var(--muted);">Tarif appliqué : AB ${ab <= 5 ? '≤ 5m' : '5,01–6m'}</span>`;
+    }
+  } else {
+    infoEl.textContent = '';
+  }
+  Object.entries(D.trspSeul).forEach(([key, z]) => {
+    const el = v(`p-trsp-${key}`);
+    if (el) el.textContent = (!isNaN(ab) && ab > 6) ? 'sur devis' : fmt(z[bracket]);
+  });
+}
+</script>
+</body>
+</html>

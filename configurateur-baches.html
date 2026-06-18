@@ -1,0 +1,1142 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JM Bâches — Configurateur Bâches</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy:   #162D5E;
+      --navy-d: #0F1F42;
+      --navy-l: #1E3A73;
+      --blue:   #2563EB;
+      --blue-l: #EFF6FF;
+      --border: #E2E8F0;
+      --bg:     #EDF1F7;
+      --surface:#F8FAFC;
+      --text:   #0F172A;
+      --text-2: #475569;
+      --muted:  #94A3B8;
+    }
+
+    body { font-family:'Inter',sans-serif; background:var(--bg); color:var(--text); font-size:14px; min-height:100vh; }
+
+    /* ── Header ── */
+    header {
+      background: linear-gradient(135deg, var(--navy-d) 0%, var(--navy) 60%, var(--navy-l) 100%);
+      padding:14px 24px; display:flex; align-items:center; gap:14px;
+      box-shadow:0 2px 12px rgba(0,0,0,0.18);
+      position:sticky; top:0; z-index:100;
+    }
+    .logo {
+      width:42px; height:42px; background:rgba(255,255,255,0.15); border-radius:10px;
+      display:flex; align-items:center; justify-content:center;
+      font-weight:800; font-size:15px; color:#fff; letter-spacing:-0.5px;
+      flex-shrink:0; border:1px solid rgba(255,255,255,0.2);
+    }
+    .header-text h1 { font-size:17px; font-weight:700; color:#fff; line-height:1.2; }
+    .header-text p  { font-size:12px; color:rgba(255,255,255,0.65); margin-top:1px; }
+
+    /* ── Tab bar ── */
+    .tab-bar {
+      background:var(--navy-d); padding:0 24px;
+      display:flex; gap:4px; position:sticky; top:70px; z-index:99;
+      border-bottom:2px solid rgba(255,255,255,0.08);
+    }
+    .tab-btn {
+      background:none; border:none; cursor:pointer;
+      padding:11px 18px; font-size:13px; font-weight:600;
+      color:rgba(255,255,255,0.5);
+      border-bottom:2px solid transparent; margin-bottom:-2px;
+      transition:color .2s, border-color .2s; font-family:'Inter',sans-serif;
+    }
+    .tab-btn.active { color:#fff; border-bottom-color:var(--blue); }
+
+    /* ── Layout ── */
+    .layout {
+      display:grid; grid-template-columns:1fr 340px; gap:20px;
+      max-width:1100px; margin:0 auto; padding:20px 16px 60px;
+    }
+    @media(max-width:768px){ .layout { grid-template-columns:1fr; } }
+
+    /* ── Card ── */
+    .card {
+      background:#fff; border-radius:14px; border:1px solid var(--border);
+      box-shadow:0 1px 4px rgba(0,0,0,0.05); margin-bottom:14px; overflow:hidden;
+    }
+    .card-head {
+      background:linear-gradient(135deg, var(--navy) 0%, var(--navy-l) 100%);
+      color:#fff; padding:12px 18px; font-weight:700; font-size:12px;
+      letter-spacing:0.06em; text-transform:uppercase;
+      display:flex; align-items:center; gap:10px;
+    }
+    .step-badge {
+      width:22px; height:22px; background:rgba(255,255,255,0.2); border-radius:50%;
+      display:flex; align-items:center; justify-content:center;
+      font-size:11px; font-weight:800; flex-shrink:0;
+    }
+    .card-body { padding:16px 18px; }
+
+    /* ── Inputs ── */
+    .form-row { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .inp-label { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-2); margin-bottom:5px; }
+    .inp-wrap {
+      display:flex; border:1.5px solid var(--border); border-radius:9px;
+      overflow:hidden; background:#fff; transition:border-color .2s;
+    }
+    .inp-wrap:focus-within { border-color:var(--blue); }
+    .inp-wrap input {
+      flex:1; border:none; outline:none; padding:10px 12px;
+      font-size:14px; font-family:'Inter',sans-serif; background:transparent; color:var(--text);
+    }
+    .inp-wrap input::placeholder { color:var(--muted); }
+    .inp-unit {
+      padding:0 12px; background:var(--surface); border-left:1px solid var(--border);
+      display:flex; align-items:center; font-size:12px; color:var(--text-2); font-weight:600;
+    }
+
+    /* ── Superficie badge ── */
+    .sup-badge {
+      margin-top:10px; background:var(--blue-l); border:1px solid #BFDBFE;
+      border-radius:8px; padding:8px 12px; font-size:13px; font-weight:600;
+      color:var(--blue); display:none;
+    }
+
+    /* ── Alerts ── */
+    .alert { padding:9px 13px; border-radius:8px; font-size:12.5px; margin-top:8px; }
+    .alert-info { background:var(--blue-l); border:1px solid #BFDBFE; color:#1D4ED8; }
+    .alert-warn { background:#FFFBEB; border:1px solid #FDE68A; color:#78350F; }
+
+    /* ── Choices ── */
+    .choices { display:flex; flex-direction:column; gap:8px; }
+    .choices.grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+
+    .choice {
+      display:flex; align-items:flex-start; gap:10px;
+      padding:12px 14px; border:1.5px solid var(--border); border-radius:11px;
+      cursor:pointer; background:#fff; transition:border-color .15s, background .15s;
+      position:relative; overflow:hidden;
+    }
+    .choice::after {
+      content:''; position:absolute; left:0; top:0; bottom:0;
+      width:3px; background:transparent; transition:background .15s;
+    }
+    .choice.sel { border-color:var(--blue); background:linear-gradient(135deg,#F0F7FF,#EBF4FF); }
+    .choice.sel::after { background:var(--blue); }
+    .choice:hover:not(.sel) { border-color:#CBD5E1; background:var(--surface); }
+    .choice input { margin-top:2px; flex-shrink:0; accent-color:var(--blue); }
+
+    .ch-title { font-size:13.5px; font-weight:600; color:var(--text); }
+    .ch-desc  { font-size:11.5px; color:var(--text-2); margin-top:3px; line-height:1.4; }
+    .ch-ref   { font-size:10px; color:var(--muted); font-weight:600; letter-spacing:0.04em; margin-top:2px; }
+    .ch-price { font-size:13px; font-weight:700; color:var(--blue); margin-top:6px; }
+    .ch-badge {
+      font-size:10px; font-weight:700; background:#D1FAE5; color:#065F46;
+      padding:2px 8px; border-radius:20px; display:inline-block; margin-left:4px;
+    }
+    .pv-badge {
+      font-size:10px; font-weight:700; background:#FEF9C3; color:#713F12;
+      padding:2px 7px; border-radius:20px;
+    }
+
+    /* ── Coloris ── */
+    .coloris-choice {
+      display:flex; align-items:center; gap:8px; padding:9px 12px;
+      border:1.5px solid var(--border); border-radius:9px; cursor:pointer;
+      background:#fff; transition:border-color .15s, background .15s;
+      position:relative; overflow:hidden;
+    }
+    .coloris-choice::after {
+      content:''; position:absolute; left:0; top:0; bottom:0;
+      width:3px; background:transparent; transition:background .15s;
+    }
+    .coloris-choice.sel { border-color:var(--blue); background:var(--blue-l); }
+    .coloris-choice.sel::after { background:var(--blue); }
+    .coloris-choice input { accent-color:var(--blue); flex-shrink:0; }
+    .coloris-swatch { display:flex; gap:3px; flex-shrink:0; }
+    .coloris-half { width:16px; height:22px; border-radius:3px; }
+    .coloris-label { font-size:12.5px; font-weight:600; }
+
+    /* ── Opt-check (checkbox) ── */
+    .opt-check {
+      display:flex; align-items:flex-start; gap:10px; padding:11px 13px;
+      border:1.5px solid var(--border); border-radius:10px; cursor:pointer;
+      background:#fff; transition:border-color .15s; position:relative; overflow:hidden;
+    }
+    .opt-check::after {
+      content:''; position:absolute; left:0; top:0; bottom:0;
+      width:3px; background:transparent; transition:background .15s;
+    }
+    .opt-check.sel { border-color:var(--blue); background:var(--blue-l); }
+    .opt-check.sel::after { background:var(--blue); }
+    .opt-check input { margin-top:2px; flex-shrink:0; accent-color:var(--blue); }
+    .opt-check-body { flex:1; }
+    .opt-check-title { font-size:13px; font-weight:600; }
+    .opt-check-ref   { font-size:10px; color:var(--muted); font-weight:600; }
+    .opt-check-price { font-size:12.5px; font-weight:700; color:var(--blue); margin-top:3px; }
+
+    /* ── Sub section ── */
+    .sub { margin-top:14px; padding-top:14px; border-top:1px solid var(--border); }
+    .sub-title {
+      font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em;
+      color:var(--muted); margin-bottom:10px;
+    }
+
+    /* ── Price panel ── */
+    .price-panel { position:sticky; top:108px; }
+    .price-card {
+      background:#fff; border:1px solid var(--border); border-radius:14px;
+      box-shadow:0 4px 20px rgba(22,45,94,.10); overflow:hidden;
+    }
+    .price-head {
+      background:linear-gradient(135deg, var(--navy-d), var(--navy));
+      color:#fff; padding:14px 18px; font-weight:700; font-size:14px;
+      display:flex; align-items:center; gap:10px;
+    }
+    .price-head-icon {
+      width:32px; height:32px; background:rgba(255,255,255,0.15); border-radius:8px;
+      display:flex; align-items:center; justify-content:center; font-size:16px;
+    }
+    .price-body { padding:14px 16px; }
+    .price-empty { text-align:center; color:var(--muted); padding:24px 0; font-size:13px; line-height:1.6; }
+
+    .pf-row {
+      display:flex; justify-content:space-between; align-items:flex-start;
+      gap:8px; padding:7px 0; border-bottom:1px solid #F1F5F9;
+    }
+    .pf-row:last-child { border-bottom:none; }
+    .pline-name  { font-size:12.5px; color:var(--text); line-height:1.35; font-weight:500; }
+    .pline-ref   { font-size:10px; color:var(--muted); font-weight:600; margin-top:1px; }
+    .pline-price { font-size:13px; font-weight:700; color:var(--text); white-space:nowrap; flex-shrink:0; }
+    .pf-sep { height:1px; background:var(--border); margin:10px 0; }
+    .pf-row.subtotal { color:var(--text-2); }
+    .pf-row.ht .pline-name  { font-weight:700; color:var(--navy); }
+    .pf-row.ht .pline-price { font-weight:700; color:var(--navy); }
+    .pf-row.ttc {
+      background:linear-gradient(135deg,var(--blue-l),#E0EEFF);
+      border:1.5px solid #BFDBFE; border-radius:9px;
+      padding:11px 14px; margin-top:8px;
+    }
+    .pf-row.ttc .pline-name  { font-size:13.5px; font-weight:800; color:var(--navy); }
+    .pf-row.ttc .pline-price { font-size:15px; font-weight:800; color:var(--navy); }
+
+    .remise-wrap {
+      display:flex; align-items:center; gap:8px;
+      padding:8px 0; border-top:1px solid var(--border); margin-top:10px;
+    }
+    .remise-wrap label { font-size:13px; flex:1; color:var(--text-2); font-weight:500; }
+    .remise-inp {
+      width:64px; border:1.5px solid var(--border); border-radius:7px;
+      padding:6px 8px; font-size:13px; font-weight:600; text-align:center;
+      outline:none; font-family:'Inter',sans-serif;
+    }
+    .remise-inp:focus { border-color:var(--blue); }
+
+    .btn-print {
+      width:100%; margin-top:10px;
+      background:linear-gradient(135deg, var(--navy), var(--navy-l));
+      color:#fff; border:none; border-radius:9px;
+      padding:12px; font-size:13px; font-weight:700;
+      cursor:pointer; font-family:'Inter',sans-serif;
+      display:flex; align-items:center; justify-content:center; gap:6px;
+      transition:box-shadow .2s, transform .15s;
+    }
+    .btn-print:hover { background:var(--navy-l); box-shadow:0 4px 14px rgba(22,45,94,.32); transform:translateY(-1px); }
+
+    @media print {
+      header, .tab-bar, .form-panel { display:none !important; }
+      .layout { display:block; }
+      .price-panel { position:static; }
+      .price-card { box-shadow:none; border:1px solid #ccc; }
+      .btn-print { display:none; }
+    }
+  </style>
+<style id="embed-style">
+  /* Masque le header propre quand l'appli tourne dans la coquille parent (?embedded=1) */
+  body.embedded > header { display: none !important; }
+  body.embedded > .tab-bar { top: 0 !important; }
+</style>
+<script>
+  if (new URLSearchParams(location.search).get('embedded') === '1') {
+    document.documentElement.classList.add('embedded-html');
+    document.addEventListener('DOMContentLoaded', () => document.body.classList.add('embedded'));
+  }
+</script>
+</head>
+<body>
+
+<header>
+  <div class="logo">JM</div>
+  <div class="header-text">
+    <h1>JM BÂCHES — Configurateur Bâches</h1>
+    <p>Bâche à Barres 4 Saisons · Bâche à Bulles · Calcul automatique de prix</p>
+  </div>
+</header>
+
+<div class="tab-bar">
+  <button class="tab-btn active" data-tab="barres" onclick="switchTab('barres')">Bâche à Barres</button>
+  <button class="tab-btn" data-tab="bulles" onclick="switchTab('bulles')">Bâche à Bulles</button>
+</div>
+
+<div class="layout">
+
+  <!-- ════════════════════════════
+       BÂCHE À BARRES
+  ════════════════════════════ -->
+  <div id="form-barres" class="form-panel">
+
+    <!-- 1. Dimensions -->
+    <div class="card">
+      <div class="card-head"><span class="step-badge">1</span> Dimensions du bassin</div>
+      <div class="card-body">
+        <div class="form-row">
+          <div>
+            <div class="inp-label">AC — Longueur du bassin</div>
+            <div class="inp-wrap">
+              <input type="number" id="ba-ac" placeholder="ex : 10.00" step="0.01" min="0">
+              <div class="inp-unit">m</div>
+            </div>
+          </div>
+          <div>
+            <div class="inp-label">AB — Largeur du bassin</div>
+            <div class="inp-wrap">
+              <input type="number" id="ba-ab" placeholder="ex : 4.00" step="0.01" min="0">
+              <div class="inp-unit">m</div>
+            </div>
+          </div>
+        </div>
+        <div id="ba-bache-dims" style="display:none; margin-top:14px; padding-top:12px; border-top:1px dashed var(--border);">
+          <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:var(--blue); margin-bottom:8px;" id="ba-debord-label">Dimensions bâche</div>
+          <div class="form-row">
+            <div>
+              <div class="inp-label">AC — Longueur bâche</div>
+              <div class="inp-wrap" style="border-color:var(--blue); background:var(--blue-l);">
+                <div id="ba-bache-ac" style="flex:1; padding:10px 12px; font-size:14px; font-weight:700; color:var(--blue);">—</div>
+                <div class="inp-unit" style="border-left-color:#BFDBFE; background:#DBEAFE; color:var(--blue);">m</div>
+              </div>
+            </div>
+            <div>
+              <div class="inp-label">AB — Largeur bâche</div>
+              <div class="inp-wrap" style="border-color:var(--blue); background:var(--blue-l);">
+                <div id="ba-bache-ab" style="flex:1; padding:10px 12px; font-size:14px; font-weight:700; color:var(--blue);">—</div>
+                <div class="inp-unit" style="border-left-color:#BFDBFE; background:#DBEAFE; color:var(--blue);">m</div>
+              </div>
+            </div>
+          </div>
+          <div id="ba-sup-badge" class="sup-badge" style="margin-top:8px;"></div>
+        </div>
+        <div id="ba-pv-petit" class="alert alert-warn" style="display:none; margin-top:10px;">
+          ⚠️ Superficie bassin &lt; 15 m² — majoration automatique <strong>+15%</strong>
+        </div>
+        <div id="ba-maniv-note" class="alert alert-info" style="display:none; margin-top:10px; font-size:11.5px;">
+          ℹ️ Bassin &gt; 9 × 4,5 m — prévoir une manivelle supplémentaire (ACMANIV).
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. Type de bassin -->
+    <div class="card">
+      <div class="card-head"><span class="step-badge">2</span> Type de bassin</div>
+      <div class="card-body">
+        <div class="choices grid-2">
+          <label class="choice sel">
+            <input type="radio" name="ba-type" value="enterre" checked>
+            <div>
+              <div class="ch-title">Enterré</div>
+              <div class="ch-desc">Dimensions intérieures du bassin</div>
+            </div>
+          </label>
+          <label class="choice">
+            <input type="radio" name="ba-type" value="horssol">
+            <div>
+              <div class="ch-title">Hors sol</div>
+              <div class="ch-desc">Dimensions extérieures margelles</div>
+            </div>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. Plus-values -->
+    <div class="card">
+      <div class="card-head"><span class="step-badge">3</span> Plus-values</div>
+      <div class="card-body">
+        <div class="choices">
+          <label class="opt-check" id="ba-pv-pans-lbl">
+            <input type="checkbox" id="ba-pv-pans">
+            <div class="opt-check-body">
+              <div class="opt-check-title">Pans coupés</div>
+              <div class="opt-check-ref">+15% sur le prix de la bâche</div>
+            </div>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. Modèle -->
+    <div class="card">
+      <div class="card-head"><span class="step-badge">4</span> Modèle de bâche</div>
+      <div class="card-body">
+        <div class="choices" id="ba-modele-choices"><!-- JS --></div>
+      </div>
+    </div>
+
+    <!-- 5. Coloris -->
+    <div class="card">
+      <div class="card-head"><span class="step-badge">5</span> Coloris PVC</div>
+      <div class="card-body">
+        <div class="choices grid-2" id="ba-coloris-choices"><!-- JS --></div>
+        <div class="alert alert-info" style="margin-top:10px; font-size:11.5px;">
+          Coloris indicatif — face supérieure / sous-face (n'affecte pas le prix)
+        </div>
+      </div>
+    </div>
+
+    <!-- 6. Options -->
+    <div class="card">
+      <div class="card-head"><span class="step-badge">6</span> Options</div>
+      <div class="card-body">
+        <div class="sub-title">Découpes</div>
+        <div class="choices" style="margin-bottom:14px;">
+          <label class="opt-check">
+            <input type="checkbox" id="ba-opt-aspi">
+            <div class="opt-check-body">
+              <div class="opt-check-title">Découpe bloc immergé / Aspi</div>
+              <div class="opt-check-ref">ACDECASPI</div>
+              <div class="opt-check-price">+ 137,07 €</div>
+            </div>
+          </label>
+          <label class="opt-check">
+            <input type="checkbox" id="ba-opt-esc">
+            <div class="opt-check-body">
+              <div class="opt-check-title">Escalier sécurité</div>
+              <div class="opt-check-ref">ACESBAR</div>
+              <div class="opt-check-price">+ 168,43 €</div>
+            </div>
+          </label>
+        </div>
+        <div id="ba-bachar-wrap" style="display:none; margin-bottom:14px;">
+          <div class="sub-title" style="margin-top:14px; padding-top:14px; border-top:1px solid var(--border);">Barre de charge</div>
+          <div class="choices">
+            <label class="opt-check">
+              <input type="checkbox" id="ba-opt-bachar">
+              <div class="opt-check-body">
+                <div class="opt-check-title">Barre de charge — escalier sur longueur</div>
+                <div class="opt-check-ref">ACBACHAR</div>
+                <div style="font-size:11px;color:var(--muted);margin-top:2px;">Prix à préciser selon configuration</div>
+              </div>
+            </label>
+          </div>
+        </div>
+        <div class="sub-title">Enrouleur Rolling-Up</div>
+        <div class="choices" id="ba-rolling-choices"><!-- JS --></div>
+      </div>
+    </div>
+
+  </div><!-- /form-barres -->
+
+
+  <!-- ════════════════════════════
+       BÂCHE À BULLES
+  ════════════════════════════ -->
+  <div id="form-bulles" class="form-panel" style="display:none;">
+
+    <!-- 1. Dimensions -->
+    <div class="card">
+      <div class="card-head"><span class="step-badge">1</span> Dimensions du bassin</div>
+      <div class="card-body">
+        <div class="form-row">
+          <div>
+            <div class="inp-label">AC — Longueur du bassin</div>
+            <div class="inp-wrap">
+              <input type="number" id="bu-ac" placeholder="ex : 10.00" step="0.01" min="0">
+              <div class="inp-unit">m</div>
+            </div>
+          </div>
+          <div>
+            <div class="inp-label">AB — Largeur du bassin</div>
+            <div class="inp-wrap">
+              <input type="number" id="bu-ab" placeholder="ex : 4.00" step="0.01" min="0">
+              <div class="inp-unit">m</div>
+            </div>
+          </div>
+        </div>
+        <div id="bu-sup-badge" class="sup-badge"></div>
+        <div id="bu-pv-petit" class="alert alert-warn" style="display:none; margin-top:10px;">
+          ⚠️ Superficie &lt; 10 m² — majoration automatique <strong>+35%</strong>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. Forme du bassin -->
+    <div class="card">
+      <div class="card-head"><span class="step-badge">2</span> Forme du bassin</div>
+      <div class="card-body">
+        <div class="choices" id="bu-forme-choices"><!-- JS --></div>
+        <div class="sub">
+          <label class="opt-check">
+            <input type="checkbox" id="bu-oeillets">
+            <div class="opt-check-body">
+              <div class="opt-check-title">Œillets supplémentaires</div>
+              <div class="opt-check-ref">+5% sur le prix de la bâche</div>
+            </div>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. Gamme -->
+    <div class="card">
+      <div class="card-head"><span class="step-badge">3</span> Gamme</div>
+      <div class="card-body">
+        <div class="choices" id="bu-gamme-choices"><!-- JS --></div>
+      </div>
+    </div>
+
+    <!-- 4. Modèle -->
+    <div class="card">
+      <div class="card-head"><span class="step-badge">4</span> Modèle</div>
+      <div class="card-body" id="bu-modele-body"><!-- JS --></div>
+    </div>
+
+    <!-- 5. Options -->
+    <div class="card">
+      <div class="card-head"><span class="step-badge">5</span> Options — Découpes</div>
+      <div class="card-body" id="bu-decoupes-body"><!-- JS --></div>
+    </div>
+
+    <!-- 6. Enrouleur -->
+    <div class="card">
+      <div class="card-head"><span class="step-badge">6</span> Enrouleur</div>
+      <div class="card-body">
+        <div class="choices" id="bu-enr-choices"><!-- JS --></div>
+      </div>
+    </div>
+
+  </div><!-- /form-bulles -->
+
+
+  <!-- ════════════════════════════
+       PRICE PANEL
+  ════════════════════════════ -->
+  <div class="price-panel">
+    <div class="price-card">
+      <div class="price-head">
+        <div class="price-head-icon">💰</div>
+        Récapitulatif de prix
+      </div>
+      <div class="price-body" id="price-body">
+        <div class="price-empty">Renseignez les dimensions<br>et sélectionnez un modèle</div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /layout -->
+
+<script>
+/* ═══════════════════════════════════════════
+   DATA
+═══════════════════════════════════════════ */
+const D = {
+  barres: {
+    modeles: [
+      { ref:'BABAS',    label:'Sécu Basic',     desc:'Brut de coupe, pitons esc. 12mm, 3 points d\'accroche',                       prix:31.213387, horssolOnly:false },
+      { ref:'BAPRI',    label:'Sécu Primo',     desc:'Ourlets longueurs, pitons esc. 12mm, 3 points d\'accroche',                   prix:33.633029, horssolOnly:false },
+      { ref:'BACLA',    label:'Sécu Classic',   desc:'Ourlets + sangles anti-soulèvement, pitons esc. 12mm, 5 points d\'accroche', prix:36.041673, horssolOnly:false },
+      { ref:'BACLATOP', label:'Sécu Top',       desc:'Sécu Classic + bande anti-abrasion, pitons esc. 12mm, 5 points d\'accroche', prix:39.678,    horssolOnly:false },
+      { ref:'BACLAFC',  label:'Sécu Easy Clip', desc:'Ourlets + sangles, fixation courte inox + pitons esc. 12mm, 5 points',       prix:42.534,    horssolOnly:false },
+      { ref:'BASEC+',   label:'Sécu+',          desc:'Sangles tension + barres alu aux 2 extrémités, pitons esc. 14mm, 5 points',  prix:34.44,     horssolOnly:false },
+      { ref:'BAHS',     label:'Cover Wood',     desc:'Hors sol — sangles cliquets, sandows V, crochets plastiques',                prix:35.037,    horssolOnly:true  },
+    ],
+    coloris: [
+      { label:'Bleu / Beige',       top:'#2B5EA7', bot:'#E8DEC8' },
+      { label:'Vert / Beige',       top:'#3A7A42', bot:'#E8DEC8' },
+      { label:'Amande / Beige',     top:'#91B877', bot:'#E8DEC8' },
+      { label:'Beige / Beige',      top:'#D4C09A', bot:'#E8DEC8' },
+      { label:'Gris / Beige',       top:'#8B98A6', bot:'#E8DEC8' },
+      { label:'Anthracite / Beige', top:'#3D4652', bot:'#E8DEC8' },
+    ],
+    opts: {
+      ACDECASPI: { label:'Découpe bloc immergé / Aspi', prix:137.0686 },
+      ACESBAR:   { label:'Escalier sécurité',           prix:168.434 },
+    },
+    rolling: [
+      { ref:'none',     label:'Sans enrouleur',                          prix:0 },
+      { ref:'RUPCDE',   label:'Rolling-Up (commandée avec bâche)',        prix:947.5 },
+      { ref:'RUPMANIV', label:'Rolling-Up + Manivelle (avec bâche)',      prix:1115.05 },
+    ],
+  },
+
+  bulles: {
+    formes: [
+      { id:'rect',  label:'Rectangulaire / Ovale / Rond', coeff:0,    badge:'' },
+      { id:'ovoid', label:'Ovoïde / Pans coupés',         coeff:0.15, badge:'+15%' },
+      { id:'rayon', label:'Rayons > 50 cm',               coeff:0.15, badge:'+15%' },
+      { id:'libre', label:'Forme libre / Triangulation-Gabarit', coeff:0.30, badge:'+30%' },
+    ],
+    gammes: [
+      {
+        id:'b180', label:'180 µm', sublabel:'Été légère',
+        modeles:[
+          { ref:'BU180NB', label:'Bleu — Non bordée', prix:7.13 },
+        ],
+        opts:{ aspi:{ref:'BUDECASPI',prix:61.2438}, esStd:{ref:'BUES',prix:70.43037}, esHs:{ref:'BUESHS',prix:90.40104} },
+      },
+      {
+        id:'b400', label:'400 µm', sublabel:'Bulles rondes',
+        modeles:[
+          { ref:'BU4004C/BB', label:'Bleu — Bordée 4 côtés',        prix:12.3033555414 },
+          { ref:'BU4002C/BB', label:'Bleu — Bordée 2 côtés',        prix:11.716149936015 },
+          { ref:'BU400NB/BB', label:'Bleu — Non bordée',            prix:8.626329964822501 },
+          { ref:'BU4004C/T',  label:'Translucide — Bordée 4 côtés', prix:12.680844859147502 },
+          { ref:'BU4002C/T',  label:'Translucide — Bordée 2 côtés', prix:11.855960794440005 },
+          { ref:'BU400NB/T',  label:'Translucide — Non bordée',     prix:8.975857110885 },
+        ],
+        opts:{ aspi:{ref:'BUDECASPI',prix:61.2438}, esStd:{ref:'BUES',prix:70.43037}, esHs:{ref:'BUESHS',prix:90.40104} },
+      },
+      {
+        id:'b500', label:'500 µm', sublabel:'Bulles rondes',
+        modeles:[
+          { ref:'BU5004C/BB', label:'Bleu — Bordée 4 côtés', prix:17.501523257641505 },
+          { ref:'BU5002C/BB', label:'Bleu — Bordée 2 côtés', prix:16.517254814329505 },
+          { ref:'BU500NB/BB', label:'Bleu — Non bordée',     prix:13.76437901194125 },
+        ],
+        opts:{ aspi:{ref:'BUDECASPI500',prix:62.2858819}, esStd:{ref:'BUES500',prix:71.628764185}, esHs:{ref:'BUESHS500',prix:83.72261578999999} },
+      },
+      {
+        id:'b500d', label:'500 µm', sublabel:'Double bulles',
+        modeles:[
+          { ref:'BUDUO4C/SO',  label:'SOLIBULL — Bleu nuit — Bordée 4 côtés',     prix:16.10621089056 },
+          { ref:'BUDUO2C/SO',  label:'SOLIBULL — Bleu nuit — Bordée 2 côtés',     prix:15.239383568325 },
+          { ref:'BUDUONB/SO',  label:'SOLIBULL — Bleu nuit — Non bordée',         prix:12.694825944990002 },
+          { ref:'BUDUO4C/T',   label:'SOL+ Guard — Translucide — Bordée 4 côtés', prix:15.924456774607503 },
+          { ref:'BUDUO2C/T',   label:'SOL+ Guard — Translucide — Bordée 2 côtés', prix:15.015686194845001 },
+          { ref:'BUDUONB/T',   label:'SOL+ Guard — Translucide — Non bordée',     prix:12.5130718290375 },
+          { ref:'BUDUO4C/GB',  label:'I-ZOL — Bleu glacial — Bordée 4 côtés',     prix:17.163405 },
+          { ref:'BUDUO2C/GB',  label:'I-ZOL — Bleu glacial — Bordée 2 côtés',     prix:16.255485750000002 },
+          { ref:'BUDUONB/GB',  label:'I-ZOL — Bleu glacial — Non bordée',         prix:13.76803575 },
+          { ref:'BUSW500',     label:'SW500 — Été/Hiver (boudin ramasse-feuille inclus)', prix:18.954369 },
+        ],
+        opts:{ aspi:{ref:'BUDECASPISOL+',prix:71.6236147}, esStd:{ref:'BUESSOL+',prix:82.367156905}, esHs:{ref:'BUESHSSOL+',prix:105.35731877} },
+      },
+    ],
+    enrouleurs: [
+      { ref:'none',   label:'Sans enrouleur',                     desc:'',                           prix:0 },
+      { ref:'ENRHS',  label:'Hors sol — jusqu\'à 5 m de large',   desc:'Tube ø42mm ext.',            prix:194.25 },
+      { ref:'ENRECO', label:'Enterré Éco — jusqu\'à 4 m de large',desc:'Tube ø80mm, pieds en T',     prix:255.15 },
+      { ref:'ENR1',   label:'Enterré — jusqu\'à 5 m de large',    desc:'Tube ø80mm, pieds en U',     prix:283.5 },
+      { ref:'ENR2',   label:'Enterré — jusqu\'à 6 m de large',    desc:'Tube ø102mm, pieds en T',    prix:320.25 },
+      { ref:'ENR4',   label:'Enterré — jusqu\'à 7,5 m de large',  desc:'Tube ø102mm, pieds en T',    prix:509.25 },
+    ],
+  },
+};
+
+/* ═══════════════════════════════════════════
+   UTILS
+═══════════════════════════════════════════ */
+const v  = id  => document.getElementById(id);
+const q  = sel => document.querySelector(sel);
+const qa = sel => document.querySelectorAll(sel);
+const fmt   = n => n.toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' €';
+const fmtM2 = n => n.toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' m²';
+const fmtR  = n => n.toLocaleString('fr-FR',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' €/m²';
+
+function syncChoices(sel) {
+  qa(sel).forEach(r => {
+    const lbl = r.closest('.choice, .coloris-choice');
+    if (lbl) lbl.classList.toggle('sel', r.checked);
+  });
+}
+function bindChoices(sel, cb) {
+  qa(sel).forEach(r => r.addEventListener('change', () => { syncChoices(sel); cb(); }));
+}
+
+let activeTab = 'barres';
+function switchTab(tab) {
+  activeTab = tab;
+  v('form-barres').style.display = tab === 'barres' ? '' : 'none';
+  v('form-bulles').style.display = tab === 'bulles' ? '' : 'none';
+  qa('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  calculate();
+}
+
+function renderEmpty() {
+  v('price-body').innerHTML = '<div class="price-empty">Renseignez les dimensions<br>et sélectionnez un modèle</div>';
+}
+
+/* ═══════════════════════════════════════════
+   BARRES — HELPERS DÉBORD
+═══════════════════════════════════════════ */
+function getBacheDebord() {
+  const type = q('input[name=ba-type]:checked')?.value || 'enterre';
+  return type === 'horssol' ? 0.20 : 0.50;
+}
+function getBacheDims(ac, ab) {
+  const d = getBacheDebord();
+  return { acB: ac + d, abB: ab + d };
+}
+function updateBaSup() {
+  const ac = parseFloat(v('ba-ac').value);
+  const ab = parseFloat(v('ba-ab').value);
+  const ok = !isNaN(ac) && !isNaN(ab) && ac > 0 && ab > 0;
+  const type = q('input[name=ba-type]:checked')?.value || 'enterre';
+  const debordCm = type === 'horssol' ? 10 : 25;
+
+  v('ba-debord-label').textContent = `Dimensions bâche (+${debordCm} cm par côté)`;
+
+  if (ok) {
+    const { acB, abB } = getBacheDims(ac, ab);
+    const supBache = acB * abB;
+    v('ba-bache-ac').textContent = acB.toFixed(2);
+    v('ba-bache-ab').textContent = abB.toFixed(2);
+    v('ba-bache-dims').style.display = '';
+    v('ba-sup-badge').textContent = 'Superficie bâche : ' + fmtM2(supBache);
+    v('ba-sup-badge').style.display = '';
+    v('ba-pv-petit').style.display = (ac * ab) < 15 ? '' : 'none';
+  } else {
+    v('ba-bache-dims').style.display = 'none';
+    v('ba-pv-petit').style.display = 'none';
+  }
+  v('ba-maniv-note').style.display = (ok && ac > 9 && ab > 4.5) ? '' : 'none';
+}
+
+/* ═══════════════════════════════════════════
+   BARRES — RENDER
+═══════════════════════════════════════════ */
+function renderBarresModeles() {
+  const type = q('input[name=ba-type]:checked')?.value || 'enterre';
+  const ac = parseFloat(v('ba-ac').value);
+  const ab = parseFloat(v('ba-ab').value);
+  const { acB, abB } = (ac > 0 && ab > 0) ? getBacheDims(ac, ab) : { acB: NaN, abB: NaN };
+  const sup = acB * abB;
+  const hasSup = !isNaN(sup) && sup > 0;
+
+  const filtered = D.barres.modeles.filter(m =>
+    type === 'horssol' ? m.horssolOnly : !m.horssolOnly
+  );
+
+  const current = q('input[name=ba-modele]:checked')?.value;
+  const toCheck = filtered.find(m => m.ref === current) ? current : filtered[0]?.ref;
+
+  v('ba-modele-choices').innerHTML = filtered.map(m => {
+    const isChecked = m.ref === toCheck;
+    return `
+      <label class="choice${isChecked ? ' sel' : ''}">
+        <input type="radio" name="ba-modele" value="${m.ref}" ${isChecked ? 'checked' : ''}>
+        <div style="flex:1;">
+          <span class="ch-title">${m.label}</span>
+          <div class="ch-desc">${m.desc}</div>
+          <div class="ch-ref">${m.ref}</div>
+          <div style="display:flex;align-items:baseline;gap:8px;margin-top:5px;">
+            ${hasSup
+              ? `<span class="ch-price">${fmt(m.prix * sup)}</span><span style="font-size:10px;color:var(--muted);">${fmtR(m.prix)}</span>`
+              : `<span class="ch-price">${fmtR(m.prix)}</span>`}
+          </div>
+        </div>
+      </label>`;
+  }).join('');
+
+  bindChoices('input[name=ba-modele]', calculate);
+}
+
+function renderBarresColoris() {
+  v('ba-coloris-choices').innerHTML = D.barres.coloris.map((c, i) => `
+    <label class="coloris-choice${i === 0 ? ' sel' : ''}">
+      <input type="radio" name="ba-coloris" value="${c.label}" ${i === 0 ? 'checked' : ''}>
+      <div class="coloris-swatch">
+        <div class="coloris-half" style="background:${c.top};"></div>
+        <div class="coloris-half" style="background:${c.bot};"></div>
+      </div>
+      <span class="coloris-label">${c.label}</span>
+    </label>`).join('');
+  bindChoices('input[name=ba-coloris]', calculate);
+}
+
+function renderBarresRolling() {
+  v('ba-rolling-choices').innerHTML = D.barres.rolling.map((r, i) => `
+    <label class="choice${i === 0 ? ' sel' : ''}">
+      <input type="radio" name="ba-rolling" value="${r.ref}" ${i === 0 ? 'checked' : ''}>
+      <div style="flex:1;">
+        <span class="ch-title">${r.label}</span>
+        ${r.ref !== 'none' ? `<div class="ch-ref">${r.ref}</div>` : ''}
+        <div class="ch-price">${r.prix > 0 ? '+ ' + fmt(r.prix) : '—'}</div>
+      </div>
+    </label>`).join('');
+  bindChoices('input[name=ba-rolling]', calculate);
+}
+
+/* ═══════════════════════════════════════════
+   BULLES — RENDER
+═══════════════════════════════════════════ */
+function renderBullesFormes() {
+  v('bu-forme-choices').innerHTML = D.bulles.formes.map((f, i) => `
+    <label class="choice${i === 0 ? ' sel' : ''}">
+      <input type="radio" name="bu-forme" value="${f.id}" ${i === 0 ? 'checked' : ''}>
+      <div style="flex:1;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span class="ch-title">${f.label}</span>
+        ${f.badge ? `<span class="pv-badge">${f.badge}</span>` : ''}
+      </div>
+    </label>`).join('');
+  bindChoices('input[name=bu-forme]', calculate);
+}
+
+function renderBullesGammes() {
+  v('bu-gamme-choices').innerHTML = D.bulles.gammes.map((g, i) => `
+    <label class="choice${i === 0 ? ' sel' : ''}">
+      <input type="radio" name="bu-gamme" value="${g.id}" ${i === 0 ? 'checked' : ''}>
+      <div style="flex:1;display:flex;align-items:center;gap:6px;">
+        <span class="ch-title">${g.label}</span>
+        <span style="font-size:11.5px;color:var(--text-2);">${g.sublabel}</span>
+      </div>
+    </label>`).join('');
+  bindChoices('input[name=bu-gamme]', () => {
+    renderBullesModeles();
+    renderBullesDecoupes();
+    calculate();
+  });
+}
+
+function renderBullesModeles() {
+  const gammeId = q('input[name=bu-gamme]:checked')?.value || 'b180';
+  const gamme = D.bulles.gammes.find(g => g.id === gammeId);
+  if (!gamme) { v('bu-modele-body').innerHTML = ''; return; }
+
+  const ac = parseFloat(v('bu-ac').value);
+  const ab = parseFloat(v('bu-ab').value);
+  const sup = ac * ab;
+  const hasSup = !isNaN(sup) && sup > 0;
+
+  const current = q('input[name=bu-modele]:checked')?.value;
+  const toCheck = gamme.modeles.find(m => m.ref === current) ? current : gamme.modeles[0]?.ref;
+
+  v('bu-modele-body').innerHTML = `<div class="choices">${gamme.modeles.map(m => {
+    const isChecked = m.ref === toCheck;
+    return `
+      <label class="choice${isChecked ? ' sel' : ''}">
+        <input type="radio" name="bu-modele" value="${m.ref}" ${isChecked ? 'checked' : ''}>
+        <div style="flex:1;">
+          <span class="ch-title">${m.label}</span>
+          <div class="ch-ref">${m.ref}</div>
+          <div style="display:flex;align-items:baseline;gap:8px;margin-top:5px;">
+            ${hasSup
+              ? `<span class="ch-price">${fmt(m.prix * sup)}</span><span style="font-size:10px;color:var(--muted);">${fmtR(m.prix)}</span>`
+              : `<span class="ch-price">${fmtR(m.prix)}</span>`}
+          </div>
+        </div>
+      </label>`;
+  }).join('')}</div>`;
+
+  bindChoices('input[name=bu-modele]', calculate);
+}
+
+function renderBullesDecoupes() {
+  const gammeId = q('input[name=bu-gamme]:checked')?.value || 'b180';
+  const gamme = D.bulles.gammes.find(g => g.id === gammeId);
+  if (!gamme) { v('bu-decoupes-body').innerHTML = ''; return; }
+  const o = gamme.opts;
+
+  v('bu-decoupes-body').innerHTML = `<div class="choices">
+    <label class="opt-check">
+      <input type="checkbox" id="bu-opt-aspi">
+      <div class="opt-check-body">
+        <div class="opt-check-title">Découpe Échelle / Aspi</div>
+        <div class="opt-check-ref">${o.aspi.ref}</div>
+        <div class="opt-check-price">+ ${fmt(o.aspi.prix)}</div>
+      </div>
+    </label>
+    <label class="opt-check">
+      <input type="checkbox" id="bu-opt-esStd">
+      <div class="opt-check-body">
+        <div class="opt-check-title">Escalier standard <span style="font-size:10.5px;color:var(--muted);">&lt; 3,00 m × 1,50 m</span></div>
+        <div class="opt-check-ref">${o.esStd.ref}</div>
+        <div class="opt-check-price">+ ${fmt(o.esStd.prix)}</div>
+      </div>
+    </label>
+    <label class="opt-check">
+      <input type="checkbox" id="bu-opt-esHs">
+      <div class="opt-check-body">
+        <div class="opt-check-title">Escalier hors standard <span style="font-size:10.5px;color:var(--muted);">&gt; 3,00 m × 1,50 m</span></div>
+        <div class="opt-check-ref">${o.esHs.ref}</div>
+        <div class="opt-check-price">+ ${fmt(o.esHs.prix)}</div>
+      </div>
+    </label>
+  </div>`;
+
+  ['bu-opt-aspi','bu-opt-esStd','bu-opt-esHs'].forEach(id => {
+    const el = v(id);
+    if (el) el.addEventListener('change', function() {
+      this.closest('.opt-check').classList.toggle('sel', this.checked);
+      calculate();
+    });
+  });
+}
+
+function renderBullesEnrouleurs() {
+  v('bu-enr-choices').innerHTML = D.bulles.enrouleurs.map((e, i) => `
+    <label class="choice${i === 0 ? ' sel' : ''}">
+      <input type="radio" name="bu-enr" value="${e.ref}" ${i === 0 ? 'checked' : ''}>
+      <div style="flex:1;">
+        <span class="ch-title">${e.label}</span>
+        ${e.desc ? `<div class="ch-desc">${e.desc}</div>` : ''}
+        ${e.ref !== 'none' ? `<div class="ch-ref">${e.ref}</div>` : ''}
+        <div class="ch-price">${e.prix > 0 ? '+ ' + fmt(e.prix) : '—'}</div>
+      </div>
+    </label>`).join('');
+  bindChoices('input[name=bu-enr]', calculate);
+}
+
+/* ═══════════════════════════════════════════
+   CALCULATE — BARRES
+═══════════════════════════════════════════ */
+function calcBarres() {
+  const ac = parseFloat(v('ba-ac').value);
+  const ab = parseFloat(v('ba-ab').value);
+  if (isNaN(ac) || isNaN(ab) || ac <= 0 || ab <= 0) { renderEmpty(); return; }
+  const supBassin = ac * ab;
+  const { acB, abB } = getBacheDims(ac, ab);
+  const sup = acB * abB;
+
+  const modeleRef = q('input[name=ba-modele]:checked')?.value;
+  const modele = D.barres.modeles.find(m => m.ref === modeleRef);
+  if (!modele) { renderEmpty(); return; }
+
+  // Plus-values (bassin superficie pour le seuil < 15m²)
+  let pvCoeff = 1.0;
+  const pvPetit = supBassin < 15;
+  const pvPans  = v('ba-pv-pans')?.checked;
+  if (pvPetit) pvCoeff += 0.15;
+  if (pvPans)  pvCoeff += 0.15;
+
+  const prixBache = modele.prix * sup * pvCoeff;
+
+  // Options
+  let totalHT = prixBache;
+  const hasAspi   = v('ba-opt-aspi')?.checked;
+  const hasEsc    = v('ba-opt-esc')?.checked;
+  const hasBarchar= v('ba-opt-bachar')?.checked;
+  if (hasAspi) totalHT += D.barres.opts.ACDECASPI.prix;
+  if (hasEsc)  totalHT += D.barres.opts.ACESBAR.prix;
+
+  const rollingRef = q('input[name=ba-rolling]:checked')?.value;
+  const rolling = D.barres.rolling.find(r => r.ref === rollingRef);
+  if (rolling && rolling.prix > 0) totalHT += rolling.prix;
+
+  const coloris = q('input[name=ba-coloris]:checked')?.value;
+
+  const remise = parseFloat(v('ba-remise')?.value) || 0;
+  const apresRemise = totalHT * (1 - remise / 100);
+  const tva = apresRemise * 0.20;
+  const ttc = apresRemise * 1.20;
+
+  let html = '';
+  html += `<div class="pf-row"><div><div class="pline-name">Superficie bassin</div><div class="pline-ref">→ Bâche : ${fmtM2(sup)} (+${getBacheDebord()/2*100} cm/côté)</div></div><div class="pline-price">${fmtM2(supBassin)}</div></div>`;
+
+  // PV label
+  let pvParts = [];
+  if (pvPetit) pvParts.push('+15% &lt;15m²');
+  if (pvPans)  pvParts.push('+15% pans coupés');
+  const pvStr = pvParts.length ? ` <span style="font-size:10px;background:#FEF9C3;color:#713F12;padding:1px 6px;border-radius:20px;">${pvParts.join(' · ')}</span>` : '';
+
+  html += `<div class="pf-row">
+    <div>
+      <div class="pline-name">${modele.label}${pvStr}</div>
+      <div class="pline-ref">${modele.ref} — ${fmtR(modele.prix)}${pvCoeff !== 1 ? ' × '+pvCoeff.toFixed(2) : ''}</div>
+    </div>
+    <div class="pline-price">${fmt(prixBache)}</div>
+  </div>`;
+
+  if (coloris) html += `<div class="pf-row"><div class="pline-name" style="color:var(--text-2);">Coloris : ${coloris}</div></div>`;
+
+  if (hasAspi)    html += `<div class="pf-row"><div><div class="pline-name">Découpe bloc immergé/Aspi</div><div class="pline-ref">ACDECASPI</div></div><div class="pline-price">+ ${fmt(D.barres.opts.ACDECASPI.prix)}</div></div>`;
+  if (hasEsc)     html += `<div class="pf-row"><div><div class="pline-name">Escalier sécurité</div><div class="pline-ref">ACESBAR</div></div><div class="pline-price">+ ${fmt(D.barres.opts.ACESBAR.prix)}</div></div>`;
+  if (hasBarchar) html += `<div class="pf-row"><div><div class="pline-name">Barre de charge — escalier sur longueur</div><div class="pline-ref">ACBACHAR</div></div><div class="pline-price" style="color:var(--muted);">à préciser</div></div>`;
+  if (rolling && rolling.prix > 0) html += `<div class="pf-row"><div><div class="pline-name">${rolling.label}</div><div class="pline-ref">${rolling.ref}</div></div><div class="pline-price">+ ${fmt(rolling.prix)}</div></div>`;
+
+  html += '<div class="pf-sep"></div>';
+  if (remise > 0) {
+    html += `<div class="pf-row subtotal"><div class="pline-name">Sous-total HT</div><div class="pline-price">${fmt(totalHT)}</div></div>`;
+    html += `<div class="pf-row subtotal"><div class="pline-name">Remise ${remise}%</div><div class="pline-price">−${fmt(totalHT - apresRemise)}</div></div>`;
+  }
+  html += `<div class="pf-row ht"><div class="pline-name">Total HT</div><div class="pline-price">${fmt(apresRemise)}</div></div>`;
+  html += `<div class="pf-row subtotal"><div class="pline-name">TVA 20%</div><div class="pline-price">+ ${fmt(tva)}</div></div>`;
+  html += `<div class="pf-row ttc"><div class="pline-name">Total TTC</div><div class="pline-price">${fmt(ttc)}</div></div>`;
+
+  html += `<div class="remise-wrap">
+    <label for="ba-remise">Remise client (%)</label>
+    <input class="remise-inp" type="number" id="ba-remise" min="0" max="100" step="0.5"
+      value="${remise}" onchange="calculate()" oninput="calculate()">
+  </div>`;
+  html += `<button class="btn-print" onclick="window.print()">🖨 Imprimer le récapitulatif</button>`;
+
+  v('price-body').innerHTML = html;
+}
+
+/* ═══════════════════════════════════════════
+   CALCULATE — BULLES
+═══════════════════════════════════════════ */
+function calcBulles() {
+  const ac = parseFloat(v('bu-ac').value);
+  const ab = parseFloat(v('bu-ab').value);
+  if (isNaN(ac) || isNaN(ab) || ac <= 0 || ab <= 0) { renderEmpty(); return; }
+  const sup = ac * ab;
+
+  const gammeId = q('input[name=bu-gamme]:checked')?.value || 'b180';
+  const gamme = D.bulles.gammes.find(g => g.id === gammeId);
+  const modeleRef = q('input[name=bu-modele]:checked')?.value;
+  const modele = gamme?.modeles.find(m => m.ref === modeleRef);
+  if (!modele) { renderEmpty(); return; }
+
+  // Plus-values
+  const formeId = q('input[name=bu-forme]:checked')?.value || 'rect';
+  const forme = D.bulles.formes.find(f => f.id === formeId);
+  let pvCoeff = 1.0 + (forme?.coeff || 0);
+  const pvPetit    = sup < 10;
+  const pvOeillets = v('bu-oeillets')?.checked;
+  if (pvPetit)    pvCoeff += 0.35;
+  if (pvOeillets) pvCoeff += 0.05;
+
+  const prixBache = modele.prix * sup * pvCoeff;
+
+  const opts = gamme.opts;
+  let totalHT = prixBache;
+  const hasAspi  = v('bu-opt-aspi')?.checked;
+  const hasEsStd = v('bu-opt-esStd')?.checked;
+  const hasEsHs  = v('bu-opt-esHs')?.checked;
+  if (hasAspi)  totalHT += opts.aspi.prix;
+  if (hasEsStd) totalHT += opts.esStd.prix;
+  if (hasEsHs)  totalHT += opts.esHs.prix;
+
+  const enrRef = q('input[name=bu-enr]:checked')?.value;
+  const enr = D.bulles.enrouleurs.find(e => e.ref === enrRef);
+  if (enr && enr.prix > 0) totalHT += enr.prix;
+
+  const remise = parseFloat(v('bu-remise')?.value) || 0;
+  const apresRemise = totalHT * (1 - remise / 100);
+  const tva = apresRemise * 0.20;
+  const ttc = apresRemise * 1.20;
+
+  let html = '';
+  html += `<div class="pf-row"><div class="pline-name">Superficie</div><div class="pline-price">${fmtM2(sup)}</div></div>`;
+
+  let pvParts = [];
+  if (forme?.coeff > 0) pvParts.push('+'+Math.round(forme.coeff*100)+'% forme');
+  if (pvPetit)    pvParts.push('+35% &lt;10m²');
+  if (pvOeillets) pvParts.push('+5% œillets');
+  const pvStr = pvParts.length ? ` <span style="font-size:10px;background:#FEF9C3;color:#713F12;padding:1px 6px;border-radius:20px;">${pvParts.join(' · ')}</span>` : '';
+
+  html += `<div class="pf-row">
+    <div>
+      <div class="pline-name">${modele.label}${pvStr}</div>
+      <div class="pline-ref">${modele.ref} — ${fmtR(modele.prix)}${pvCoeff !== 1 ? ' × '+pvCoeff.toFixed(2) : ''}</div>
+    </div>
+    <div class="pline-price">${fmt(prixBache)}</div>
+  </div>`;
+
+  if (hasAspi)  html += `<div class="pf-row"><div><div class="pline-name">Découpe Échelle/Aspi</div><div class="pline-ref">${opts.aspi.ref}</div></div><div class="pline-price">+ ${fmt(opts.aspi.prix)}</div></div>`;
+  if (hasEsStd) html += `<div class="pf-row"><div><div class="pline-name">Escalier standard</div><div class="pline-ref">${opts.esStd.ref}</div></div><div class="pline-price">+ ${fmt(opts.esStd.prix)}</div></div>`;
+  if (hasEsHs)  html += `<div class="pf-row"><div><div class="pline-name">Escalier hors standard</div><div class="pline-ref">${opts.esHs.ref}</div></div><div class="pline-price">+ ${fmt(opts.esHs.prix)}</div></div>`;
+  if (enr && enr.prix > 0) html += `<div class="pf-row"><div><div class="pline-name">${enr.label}</div><div class="pline-ref">${enr.ref}</div></div><div class="pline-price">+ ${fmt(enr.prix)}</div></div>`;
+
+  html += '<div class="pf-sep"></div>';
+  if (remise > 0) {
+    html += `<div class="pf-row subtotal"><div class="pline-name">Sous-total HT</div><div class="pline-price">${fmt(totalHT)}</div></div>`;
+    html += `<div class="pf-row subtotal"><div class="pline-name">Remise ${remise}%</div><div class="pline-price">−${fmt(totalHT - apresRemise)}</div></div>`;
+  }
+  html += `<div class="pf-row ht"><div class="pline-name">Total HT</div><div class="pline-price">${fmt(apresRemise)}</div></div>`;
+  html += `<div class="pf-row subtotal"><div class="pline-name">TVA 20%</div><div class="pline-price">+ ${fmt(tva)}</div></div>`;
+  html += `<div class="pf-row ttc"><div class="pline-name">Total TTC</div><div class="pline-price">${fmt(ttc)}</div></div>`;
+
+  html += `<div class="remise-wrap">
+    <label for="bu-remise">Remise client (%)</label>
+    <input class="remise-inp" type="number" id="bu-remise" min="0" max="100" step="0.5"
+      value="${remise}" onchange="calculate()" oninput="calculate()">
+  </div>`;
+  html += `<button class="btn-print" onclick="window.print()">🖨 Imprimer le récapitulatif</button>`;
+
+  v('price-body').innerHTML = html;
+}
+
+function calculate() {
+  if (activeTab === 'barres') calcBarres();
+  else calcBulles();
+}
+
+/* ═══════════════════════════════════════════
+   INIT
+═══════════════════════════════════════════ */
+(function init() {
+  /* ── Barres ── */
+  renderBarresModeles();
+  renderBarresColoris();
+  renderBarresRolling();
+
+  ['ba-ac','ba-ab'].forEach(id => v(id).addEventListener('input', () => {
+    updateBaSup();
+    renderBarresModeles();
+    calculate();
+  }));
+
+  bindChoices('input[name=ba-type]', () => {
+    updateBaSup();
+    renderBarresModeles();
+    calculate();
+  });
+  updateBaSup();
+
+  v('ba-pv-pans').addEventListener('change', function() {
+    this.closest('.opt-check').classList.toggle('sel', this.checked);
+    calculate();
+  });
+
+  v('ba-opt-aspi').addEventListener('change', function() {
+    this.closest('.opt-check').classList.toggle('sel', this.checked);
+    calculate();
+  });
+
+  v('ba-opt-esc').addEventListener('change', function() {
+    this.closest('.opt-check').classList.toggle('sel', this.checked);
+    const bacharWrap = v('ba-bachar-wrap');
+    bacharWrap.style.display = this.checked ? '' : 'none';
+    if (!this.checked) {
+      const cb = v('ba-opt-bachar');
+      if (cb) { cb.checked = false; cb.closest('.opt-check').classList.remove('sel'); }
+    }
+    calculate();
+  });
+
+  v('ba-opt-bachar').addEventListener('change', function() {
+    this.closest('.opt-check').classList.toggle('sel', this.checked);
+    calculate();
+  });
+
+  /* ── Bulles ── */
+  renderBullesFormes();
+  renderBullesGammes();
+  renderBullesModeles();
+  renderBullesDecoupes();
+  renderBullesEnrouleurs();
+
+  ['bu-ac','bu-ab'].forEach(id => v(id).addEventListener('input', () => {
+    const ac = parseFloat(v('bu-ac').value);
+    const ab = parseFloat(v('bu-ab').value);
+    const sup = ac * ab;
+    const ok = !isNaN(sup) && sup > 0;
+    const badge = v('bu-sup-badge');
+    badge.textContent = ok ? 'Superficie : ' + fmtM2(sup) : '';
+    badge.style.display = ok ? '' : 'none';
+    v('bu-pv-petit').style.display = ok && sup < 10 ? '' : 'none';
+    renderBullesModeles();
+    calculate();
+  }));
+
+  v('bu-oeillets').addEventListener('change', function() {
+    this.closest('.opt-check').classList.toggle('sel', this.checked);
+    calculate();
+  });
+})();
+</script>
+</body>
+</html>
