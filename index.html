@@ -3230,24 +3230,36 @@ ${sign}`,
 
   const exportPDF = async () => {
     const { jsPDF } = window.jspdf;
+    // Récupérer toutes les sections de binôme dans la grille (une par binôme)
     const grille = document.getElementById('planning-grille');
     if (!grille) { showToast('Grille introuvable'); return; }
+    const sections = grille.querySelectorAll('section.print-page');
+    if (!sections.length) { showToast('Aucun planning à exporter'); return; }
     showToast('Génération du PDF…');
     try {
-      const canvas = await html2canvas(grille, { scale: 2, useCORS: true, backgroundColor: '#ffffff', scrollX: 0, scrollY: -window.scrollY });
-      const imgData = canvas.toDataURL('image/png');
       const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3' });
       const pdfW = pdf.internal.pageSize.getWidth();
       const pdfH = pdf.internal.pageSize.getHeight();
-      const ratio = canvas.width / canvas.height;
-      let imgW = pdfW - 10, imgH = imgW / ratio;
-      if (imgH > pdfH - 10) { imgH = pdfH - 10; imgW = imgH * ratio; }
-      pdf.setFontSize(9);
-      pdf.setTextColor(120);
-      pdf.text('JM Bâches — Planning ' + weekLabel, 5, 5);
-      pdf.addImage(imgData, 'PNG', 5, 8, imgW, imgH);
+      let first = true;
+      for (const section of sections) {
+        // Masquer temporairement les chips overflow pour la capture
+        const overflowEl = section.querySelector('[data-overflow]');
+        if (overflowEl) overflowEl.style.display = 'none';
+        const canvas = await html2canvas(section, { scale: 2, useCORS: true, backgroundColor: '#ffffff', scrollX: 0, scrollY: 0, windowWidth: section.scrollWidth, width: section.scrollWidth });
+        if (overflowEl) overflowEl.style.display = '';
+        if (!first) pdf.addPage('a3', 'landscape');
+        first = false;
+        const imgData = canvas.toDataURL('image/png');
+        const ratio = canvas.width / canvas.height;
+        let imgW = pdfW - 10, imgH = imgW / ratio;
+        if (imgH > pdfH - 10) { imgH = pdfH - 10; imgW = imgH * ratio; }
+        pdf.setFontSize(8);
+        pdf.setTextColor(150);
+        pdf.text('JM Bâches — ' + weekLabel, 5, 5);
+        pdf.addImage(imgData, 'PNG', 5, 8, imgW, imgH);
+      }
       pdf.save('planning_' + weekKey + '.pdf');
-      showToast('PDF exporté');
+      showToast('PDF exporté (' + sections.length + ' page' + (sections.length > 1 ? 's' : '') + ')');
     } catch(e) { showToast('Erreur PDF : ' + e.message); }
   };
 
@@ -3649,7 +3661,7 @@ ${sign}`,
                   </div>
                 )}
                 {allOverflow.length > 0 && (
-                  <div className="mt-3 p-3 rounded text-sm" style={{ background: '#F3F4F6', border: '1px dashed var(--border)' }}>
+                  <div data-overflow="1" className="mt-3 p-3 rounded text-sm" style={{ background: '#F3F4F6', border: '1px dashed var(--border)' }}>
                     <div className="font-semibold mb-2" style={{ color: 'var(--ink-soft)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                       Chantiers non casés — glisse sur un jour pour forcer ({allOverflow.length})
                     </div>
