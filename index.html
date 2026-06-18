@@ -3248,20 +3248,18 @@ ${sign}`,
         if (overflowEl) overflowEl.style.display = 'none';
         noprint.forEach(el => el.style.display = 'none');
         const canvas = await html2canvas(section, {
-          scale: 3,
+          scale: 2,
           useCORS: true,
           backgroundColor: '#ffffff',
           scrollX: 0,
           scrollY: 0,
-          windowWidth: section.scrollWidth,
-          width: section.scrollWidth,
           logging: false,
         });
         if (overflowEl) overflowEl.style.display = '';
         noprint.forEach(el => el.style.display = '');
         if (!first) pdf.addPage('a3', 'landscape');
         first = false;
-        const imgData = canvas.toDataURL('image/png');
+        const imgData = canvas.toDataURL('image/jpeg', 0.82);
         const ratio = canvas.width / canvas.height;
         // Marges 8mm de chaque côté
         const margin = 8;
