@@ -1341,7 +1341,7 @@ function App() {
       <main className="max-w-7xl mx-auto px-6 pb-24">
         {tab === 'dashboard' && <Dashboard chantiers={chantiers} binomes={binomes} setTab={setTab} />}
         {tab === 'chantiers' && <Chantiers {...{chantiers, binomes, poseTypes, apiKey, upsert: upsertChantier, del: deleteChantier, showToast, setTab, archiveMonths}} pendingEdit={pendingEdit} onClearPendingEdit={() => setPendingEdit(null)} />}
-        {tab === 'planning' && <EmploiDuTemps chantiers={chantiers} binomes={binomes} depot={depot} workday={workday} unavail={unavail} upsert={upsertChantier} showToast={showToast} setTab={setTab} setPendingEdit={setPendingEdit} />}
+        {tab === 'planning' && <EmploiDuTemps chantiers={chantiers} binomes={binomes} depot={depot} workday={workday} unavail={unavail} upsert={upsertChantier} showToast={showToast} setTab={setTab} setPendingEdit={setPendingEdit} poseTypes={poseTypes} />}
         {tab === 'feuilles' && <FeuillesDeRoute chantiers={chantiers} binomes={binomes} depot={depot} />}
         {tab === 'stats' && <Stats chantiers={chantiers} binomes={binomes} poseTypes={poseTypes} setPoseTypes={setPoseTypes} showToast={showToast} />}
         {tab === 'apropos' && <APropos />}
@@ -2788,7 +2788,7 @@ function cleanSavedSchedules(schedules) {
   return cleaned;
 }
 
-function EmploiDuTemps({ chantiers, binomes, depot, workday, unavail, upsert, showToast, setTab, setPendingEdit }) {
+function EmploiDuTemps({ chantiers, binomes, depot, workday, unavail, upsert, showToast, setTab, setPendingEdit, poseTypes }) {
   const [weekStart, setWeekStart] = useState(getWeekStart(new Date()));
   const [schedules, setSchedules] = useState({}); // binId -> { dayPlans, assignments, overflow, source, count }
   const [usedPools, setUsedPools] = useState(null); // pools réellement utilisés (clusters en mode auto)
