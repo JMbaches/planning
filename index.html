@@ -2102,6 +2102,73 @@ function QuickModal({ chantier, binomes, onClose, onSave }) {
 /* =========================================================================
    FEUILLES DE ROUTE
    ========================================================================= */
+function BinomeTrajetsMap({ bin, chantiers, weekDays, depot }) {
+  const mapRef = useRef(null);
+  const containerRef = useRef(null);
+
+  // Récupérer les coords depuis les assignments enregistrés dans SK.edt
+  const { resolvedPts, depotGeo } = useMemo(() => {
+    try {
+      const edt = JSON.parse(localStorage.getItem('jmb_edt_v1') || '{}');
+      // Chercher la semaine qui contient les jours de weekDays
+      const weekKey = weekDays[0] ? weekDays[0].slice(0,10) : null;
+      if (!weekKey) return { resolvedPts: [], depotGeo: null };
+      // Trouver la semaine dans edt (cherche la semaine dont le lundi correspond)
+      let binRes = null;
+      Object.entries(edt).forEach(([wk, wkData]) => {
+        if (wkData.schedules && wkData.schedules[bin.id]) binRes = wkData.schedules[bin.id];
+      });
+      if (!binRes) return { resolvedPts: [], depotGeo: null };
+      const pts = (binRes.assignments || [])
+        .filter(a => a.geo && typeof a.geo.lat === 'number' && weekDays.includes(a.iso))
+        .sort((a, b) => (a.iso||'').localeCompare(b.iso||'') || (a.order - b.order))
+        .map(a => {
+          const ch = chantiers.find(c => c.id === a.id);
+          return { lat: a.geo.lat, lon: a.geo.lon, label: ch?.clientName || '', city: ch?.city || '', iso: a.iso };
+        });
+      return { resolvedPts: pts, depotGeo: binRes.depotGeo || null };
+    } catch { return { resolvedPts: [], depotGeo: null }; }
+  }, [bin.id, weekDays, chantiers]);
+
+  useEffect(() => {
+    if (typeof L === 'undefined' || !containerRef.current) return;
+    if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
+    const allPts = [];
+    if (depotGeo) allPts.push([depotGeo.lat, depotGeo.lon]);
+    resolvedPts.forEach(p => allPts.push([p.lat, p.lon]));
+    if (!allPts.length) return;
+    const map = L.map(containerRef.current, { scrollWheelZoom: false });
+    mapRef.current = map;
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap', maxZoom: 18 }).addTo(map);
+    const color = bin.color || '#1B5FCC';
+    const seq = [];
+    if (depotGeo) seq.push({ lat: depotGeo.lat, lon: depotGeo.lon, depot: true });
+    resolvedPts.forEach(p => seq.push(p));
+    if (seq.length > 1) L.polyline(seq.map(p => [p.lat, p.lon]), { color, weight: 3, opacity: 0.7 }).addTo(map);
+    let n = 0;
+    seq.forEach(p => {
+      if (p.depot) {
+        L.marker([p.lat, p.lon], { icon: L.divIcon({ className: '', html: `<div style="background:#1C1E22;color:#fff;width:22px;height:22px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)">D</div>`, iconSize: [22,22], iconAnchor: [11,11] }) }).addTo(map).bindPopup('Dépôt JM Bâches');
+      } else {
+        n++;
+        L.marker([p.lat, p.lon], { icon: L.divIcon({ className: '', html: `<div style="background:${color};color:#fff;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4)">${n}</div>`, iconSize: [24,24], iconAnchor: [12,12] }) }).addTo(map).bindPopup(`${p.label || ''} · ${p.city || ''}`);
+      }
+    });
+    map.fitBounds(allPts, { padding: [30, 30], maxZoom: 12 });
+    setTimeout(() => map.invalidateSize(), 200);
+    return () => { if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; } };
+  }, [resolvedPts, depotGeo, bin.color]);
+
+  if (!resolvedPts.length) return null;
+  return (
+    <div className="mt-6 mb-4">
+      <div className="label-cap mb-2">Carte de la tournée</div>
+      <div ref={containerRef} style={{ height: 320, width: '100%', borderRadius: 6, overflow: 'hidden', border: '1px solid var(--border)' }} />
+      <p className="text-xs mt-1" style={{ color: 'var(--ink-faint)' }}>Les numéros indiquent l'ordre de passage. Lignes à vol d'oiseau.</p>
+    </div>
+  );
+}
+
 function FeuillesDeRoute({ chantiers, binomes, depot }) {
   const [scope, setScope] = useState('jour'); // 'jour' | 'semaine'
   const [weekScope, setWeekScope] = useState('un'); // en mode semaine : 'un' binôme | 'tous'
@@ -2394,6 +2461,7 @@ function PrintSheetWeek({ weekStart, weekData, onBack }) {
               </div>
             );
           })}
+          <BinomeTrajetsMap bin={bin} chantiers={chantiers} weekDays={weekDays} depot={depot} />
           <div className="mt-6 pt-4 text-xs text-center" style={{ color: 'var(--ink-faint)', borderTop: '1px solid var(--border)' }}>
             Édité le {new Date().toLocaleDateString('fr-FR')} · JM Bâches · Feuille de route hebdomadaire
           </div>
@@ -3505,18 +3573,19 @@ ${sign}`,
                               const top = (ev.start - axisStartMin) * PX;
                               const h = Math.max((ev.end - ev.start) * PX, 12);
                               if (ev.type === 'travel' || ev.type === 'travelApproach' || ev.type === 'travelEvening') {
-                                const mins = Math.round(ev.end - ev.start);
+                                const minsRaw = Math.round(ev.end - ev.start);
+                                const mins = fmtDuration(minsRaw * 60);
                                 const veille = ev.type !== 'travel';
                                 // Destination du trajet : prochain event de type 'pose' après l'index courant
                                 const nextPose = plan.events.slice(i + 1).find(e => e.type === 'pose' && e.chantier);
                                 const destCity = nextPose ? nextPose.chantier.city : null;
                                 const destLabel = destCity ? `→ ${destCity}` : null;
-                                const label = ev.type === 'travelApproach' ? (ev.returnDepot ? `dépôt ${mins}′` : `↧ ${mins}′`)
-                                  : ev.type === 'travelEvening' ? (ev.returnDepot ? `dépôt ${mins}′` : `veille ${mins}′`)
-                                  : `${mins}′`;
-                                const tip = ev.type === 'travelApproach' ? (ev.returnDepot ? `Retour au dépôt — vendredi matin (${mins} min)` : ev.fromDepot ? `Approche depuis le dépôt — tôt le matin (${mins} min)` : `Trajet vers le chantier du jour — reporté au matin car il finissait après 18h (${mins} min)`)
-                                  : ev.type === 'travelEvening' ? (ev.returnDepot ? `Retour au dépôt en fin de semaine (${mins} min)` : `Trajet du soir vers le chantier du lendemain — nuit sur place (${mins} min)`)
-                                  : ev.eveningLink ? `Trajet du soir vers le chantier du lendemain — nuit sur place (${mins} min)${destCity ? ' à ' + destCity : ''}` : `${mins} min de route${destCity ? ' vers ' + destCity : ''}`;
+                                const label = ev.type === 'travelApproach' ? (ev.returnDepot ? `dépôt ${mins}` : `↧ ${mins}`)
+                                  : ev.type === 'travelEvening' ? (ev.returnDepot ? `dépôt ${mins}` : `veille ${mins}`)
+                                  : `${mins}`;
+                                const tip = ev.type === 'travelApproach' ? (ev.returnDepot ? `Retour au dépôt — vendredi matin (${mins})` : ev.fromDepot ? `Approche depuis le dépôt — tôt le matin (${mins})` : `Trajet vers le chantier du jour — reporté au matin car il finissait après 18h (${mins})`)
+                                  : ev.type === 'travelEvening' ? (ev.returnDepot ? `Retour au dépôt en fin de semaine (${mins})` : `Trajet du soir vers le chantier du lendemain — nuit sur place (${mins})`)
+                                  : ev.eveningLink ? `Trajet du soir vers le chantier du lendemain — nuit sur place (${mins})${destCity ? ' à ' + destCity : ''}` : `${mins} de route${destCity ? ' vers ' + destCity : ''}`;
                                 return <div key={i} title={tip} style={{ position: 'absolute', top, left: 2, right: 2, height: h, background: 'repeating-linear-gradient(45deg, rgba(0,0,0,0.06), rgba(0,0,0,0.06) 4px, transparent 4px, transparent 8px)', border: veille ? '1px dashed var(--border-strong)' : 'none', borderRadius: 2, overflow: 'hidden', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 0 }}>
                                   {h >= 10 && (
                                     h >= 28 && destLabel
