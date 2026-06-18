@@ -89,6 +89,8 @@
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 
@@ -154,19 +156,21 @@ const DEFAULT_BINOMES = [
   { id: 'B', name: 'Binôme B', members: ['Poseur 3', 'Poseur 4'], color: '#4E9D8E', phone: '', email: '' },
 ];
 const DEFAULT_POSE_TYPES = [
-  // Volets extérieurs (hors-sol / déplaçables) — 2h30
+  // Volets hors-sol
   { name: 'Volet hors-sol Silver Roll', duration: 2.5, weather: true },
   { name: 'Volet hors-sol solaire Golden Roll', duration: 2.5, weather: true },
   { name: 'Volet hors-sol avec coffre', duration: 2.5, weather: true },
   { name: 'Volet hors-sol grand bassin X-Trem Roll', duration: 2.5, weather: true },
   { name: 'Volet déplaçable Mouv&Roll', duration: 3.5, weather: true },
-  // Volets immergés (submarine) — 6h
-  { name: 'Volet immergé Subwater', duration: 4, weather: true },
+  // Volets immergés
+  { name: 'Volet immergé Subwater', duration: 6, weather: true },
+  { name: 'Volet immergé Subwater (tablier + caillebotis)', duration: 4, weather: true },
   { name: 'Volet immergé Subwater Total', duration: 6, weather: true },
   // Interventions diverses
   { name: 'Remplacement tablier / lames', duration: 2, weather: false },
   { name: 'Métrage / repérage', duration: 1, weather: false },
   { name: 'SAV / réglage volet', duration: 1.5, weather: false },
+  { name: 'RP', duration: 1, weather: false },
 ];
 const STATUTS = {
   a_planifier: { label: 'À planifier', color: '#8B5E00', bg: '#FBF1D9' },
@@ -181,21 +185,38 @@ const STATUTS = {
 // Couleur de fond d'un chantier selon sa DURÉE de pose (heures). Texte foncé associé pour lisibilité.
 // Paliers : ≤1h gris · ≤1h30 vert · ≤2h bleu élec · ≤2h30 jaune pâle · ≤3h30 jaune prononcé · ≤6h bleu ciel · immergé total → MARINE (forcé par type)
 // prennent le palier inférieur le plus proche.
-const DUREE_COLORS = [
-  { max: 1,    bg: '#F0EEE8', ink: '#4A4733', excel: 'F0EEE8' }, // ≤ 1h   — métrage, prise de cotes (gris clair)
-  { max: 1.5,  bg: '#4CAF50', ink: '#FFFFFF', excel: '4CAF50' }, // ≤ 1h30 — SAV, RP (vert)
-  { max: 2,    bg: '#0288D1', ink: '#FFFFFF', excel: '0288D1' }, // ≤ 2h   — tablier seul (bleu électrique)
-  { max: 2.5,  bg: '#FFF9C4', ink: '#5A4A00', excel: 'FFF9C4' }, // ≤ 2h30 — hors-sol fixes (jaune pâle)
-  { max: 3.5,  bg: '#FFD600', ink: '#4A3800', excel: 'FFD600' }, // ≤ 3h30 — Mouv&Roll déplaçable (jaune prononcé)
-  { max: 6,    bg: '#B3E5FC', ink: '#01579B', excel: 'B3E5FC' }, // ≤ 6h   — immergé Subwater 4h-6h (bleu ciel très clair)
-  { max: 99,   bg: '#0D47A1', ink: '#FFFFFF', excel: '0D47A1' }, // > 6h   — fallback (bleu marine)
-];
-const MARINE = { bg: '#0D47A1', ink: '#FFFFFF', excel: '0D47A1' }; // bleu marine — immergé total (N1 et N2)
-const dureeColor = (h, type) => {
-  // Les deux interventions d'un immergé total (N1 6h ET N2 1h) → bleu marine quelle que soit la durée
-  if (type && /immerg.*total/i.test(type)) return MARINE;
-  return DUREE_COLORS.find(c => (h || 0) <= c.max) || DUREE_COLORS[DUREE_COLORS.length - 1];
+// Couleur d'encre lisible selon luminance du fond
+function _contrastInk(hex) {
+  const h = hex.replace('#','');
+  const r = parseInt(h.slice(0,2),16), g = parseInt(h.slice(2,4),16), b = parseInt(h.slice(4,6),16);
+  return (0.299*r + 0.587*g + 0.114*b) / 255 > 0.55 ? '#1A1A1A' : '#FFFFFF';
+}
+
+// Couleurs par TYPE d'intervention (pas par durée)
+const TYPE_COLORS = {
+  'Volet hors-sol Silver Roll':                        { bg: '#FFF9C4', ink: '#5A4A00', excel: 'FFF9C4' },
+  'Volet hors-sol solaire Golden Roll':                { bg: '#FFF9C4', ink: '#5A4A00', excel: 'FFF9C4' },
+  'Volet hors-sol avec coffre':                        { bg: '#FFF9C4', ink: '#5A4A00', excel: 'FFF9C4' },
+  'Volet hors-sol grand bassin X-Trem Roll':           { bg: '#FFF9C4', ink: '#5A4A00', excel: 'FFF9C4' },
+  'Volet déplaçable Mouv&Roll':                        { bg: '#FFD600', ink: '#4A3800', excel: 'FFD600' },
+  'Volet immergé Subwater':                            { bg: '#B0BEC5', ink: '#263238', excel: 'B0BEC5' },
+  'Volet immergé Subwater (tablier + caillebotis)':    { bg: '#B0BEC5', ink: '#263238', excel: 'B0BEC5' },
+  'Volet immergé Subwater Total':                      { bg: '#0D47A1', ink: '#FFFFFF', excel: '0D47A1' },
+  'Remplacement tablier / lames':                      { bg: '#0288D1', ink: '#FFFFFF', excel: '0288D1' },
+  'Métrage / repérage':                                { bg: '#F0EEE8', ink: '#4A4733', excel: 'F0EEE8' },
+  'SAV / réglage volet':                               { bg: '#7C3AED', ink: '#FFFFFF', excel: '7C3AED' },
+  'RP':                                                { bg: '#6B7C3A', ink: '#FFFFFF', excel: '6B7C3A' },
 };
+const DEFAULT_TYPE_COLOR = { bg: '#E2E8F0', ink: '#1A1A1A', excel: 'E2E8F0' };
+
+// Retourne la couleur d'un chantier selon son type.
+// Priorité : 1) couleur perso sur le poseType, 2) TYPE_COLORS, 3) défaut gris
+const typeColor = (type, customColor) => {
+  if (customColor) return { bg: customColor, ink: _contrastInk(customColor), excel: customColor.replace('#','') };
+  return TYPE_COLORS[type] || DEFAULT_TYPE_COLOR;
+};
+// Alias pour compatibilité avec les anciens appels dureeColor(h, type, customColor)
+const dureeColor = (h, type, customColor) => typeColor(type, customColor);
 
 /* =========================================================================
    UTILS
@@ -2510,7 +2531,7 @@ function exportEdtToExcel(edtStore, binomes, weeksToExport, depot) {
         if (!plan || !plan.events.length) return;
         plan.events.forEach(ev => {
           const c = ev.chantier || {};
-          if (ev.type === 'pose') listFills[listRows.length] = dureeColor(c.estimatedDuration, c.type).excel;
+          if (ev.type === 'pose') listFills[listRows.length] = dureeColor(c.estimatedDuration, c.type, (poseTypes||[]).find(p=>p.name===c.type)?.color).excel;
           listRows.push([
             weekLabel, iso, JOURS_FR[di], binName(bin.id),
             minToHHMM(ev.start), minToHHMM(ev.end),
@@ -2544,7 +2565,7 @@ function exportEdtToExcel(edtStore, binomes, weeksToExport, depot) {
         if (!plan) return [];
         return plan.events.map(ev => ({
           text: `${minToHHMM(ev.start)}–${minToHHMM(ev.end)} ${eventLabel(ev)}`,
-          fill: ev.type === 'pose' && ev.chantier ? dureeColor(ev.chantier.estimatedDuration, ev.chantier.type).excel : null,
+          fill: ev.type === 'pose' && ev.chantier ? dureeColor(ev.chantier.estimatedDuration, ev.chantier.type, (poseTypes||[]).find(p=>p.name===ev.chantier.type)?.color).excel : null,
         }));
       });
       const maxLines = Math.max(0, ...cols.map(c => c.length));
@@ -3139,6 +3160,29 @@ ${sign}`,
     setDropProposal(null);
   };
 
+  const exportPDF = async () => {
+    const { jsPDF } = window.jspdf;
+    const grille = document.getElementById('planning-grille');
+    if (!grille) { showToast('Grille introuvable'); return; }
+    showToast('Génération du PDF…');
+    try {
+      const canvas = await html2canvas(grille, { scale: 2, useCORS: true, backgroundColor: '#ffffff', scrollX: 0, scrollY: -window.scrollY });
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3' });
+      const pdfW = pdf.internal.pageSize.getWidth();
+      const pdfH = pdf.internal.pageSize.getHeight();
+      const ratio = canvas.width / canvas.height;
+      let imgW = pdfW - 10, imgH = imgW / ratio;
+      if (imgH > pdfH - 10) { imgH = pdfH - 10; imgW = imgH * ratio; }
+      pdf.setFontSize(9);
+      pdf.setTextColor(120);
+      pdf.text('JM Bâches — Planning ' + weekLabel, 5, 5);
+      pdf.addImage(imgData, 'PNG', 5, 8, imgW, imgH);
+      pdf.save('planning_' + weekKey + '.pdf');
+      showToast('PDF exporté');
+    } catch(e) { showToast('Erreur PDF : ' + e.message); }
+  };
+
   const clearSaved = () => {
     const all = sGet(SK.edt, {});
     delete all[weekKey];
@@ -3299,6 +3343,7 @@ ${sign}`,
           )}
           {hasSchedules && <button onClick={applyToPlanning} className="btn-primary"><I.save size={16} /> Accepter et enregistrer</button>}
           {hasSchedules && <button onClick={() => window.print()} className="btn-secondary"><I.printer size={16} /> Imprimer</button>}
+          {hasSchedules && <button onClick={exportPDF} className="btn-secondary"><I.download size={16} /> Exporter PDF</button>}
           <div style={{ position: 'relative' }}>
             <button onClick={() => setExportMenu(v => !v)} className="btn-secondary"><I.download size={16} /> Exporter Excel</button>
             {exportMenu && (
@@ -3394,6 +3439,7 @@ ${sign}`,
               </div>
             );
           })()}
+          <div id="planning-grille">
           {(usedPools || []).map(({ bin, pool }) => {
             const res = schedules[bin.id];
             const hasLocked = res && res.dayPlans && Object.keys(res.dayPlans).length > 0;
@@ -3490,7 +3536,8 @@ ${sign}`,
                                 </div>;
                               }
                               const c = ev.chantier;
-                              const dc = dureeColor(c.estimatedDuration, c.type);
+                              const pType = (poseTypes||[]).find(p=>p.name===c.type);
+              const dc = dureeColor(c.estimatedDuration, c.type, pType?.color);
                               // Chercher le chantier complet dans la liste (pour avoir toutes ses données à jour)
                               const fullC = chantiers.find(x => x.id === c.id) || c;
                               return <div key={i}
@@ -3568,17 +3615,25 @@ ${sign}`,
             <span className="flex items-center gap-1"><span style={{ width: 14, borderTop: '1px dashed var(--accent)', display: 'inline-block' }} /> Plafond 18h</span>
           </div>
           <div className="flex flex-wrap items-center gap-3 text-xs no-print mt-1" style={{ color: 'var(--ink-soft)' }}>
-            <span className="label-cap" style={{ letterSpacing: '0.12em' }}>Couleur = durée</span>
-            {DUREE_COLORS.map((dc, i) => {
-              const lbl = ['≤1h','≤1h30','≤2h','≤2h30','≤3h30','≤6h'][i];
-              return <span key={i} className="flex items-center gap-1"><span style={{ width: 12, height: 12, background: dc.bg, borderRadius: 2, display: 'inline-block', border: '0.5px solid rgba(0,0,0,0.15)' }} /> {lbl}</span>;
-            })}
-            <span className="flex items-center gap-1"><span style={{ width: 12, height: 12, background: MARINE.bg, borderRadius: 2, display: 'inline-block', border: '0.5px solid rgba(0,0,0,0.15)' }} /> Immergé total</span>
+            <span className="label-cap" style={{ letterSpacing: '0.12em' }}>Couleur = type</span>
+            {Object.entries(TYPE_COLORS).map(([name, dc]) => (
+              <span key={name} className="flex items-center gap-1">
+                <span style={{ width: 12, height: 12, background: dc.bg, borderRadius: 2, display: 'inline-block', border: '0.5px solid rgba(0,0,0,0.15)' }} />
+                {name.replace('Volet ','').replace('hors-sol ','').replace(' Subwater','').replace('SAV / réglage volet','SAV').replace('Remplacement tablier / lames','Tablier').replace('Métrage / repérage','Métrage')}
+              </span>
+            ))}
+            {(poseTypes||[]).filter(p => p.color && !TYPE_COLORS[p.name]).map(p => (
+              <span key={p.name} className="flex items-center gap-1">
+                <span style={{ width: 12, height: 12, background: p.color, borderRadius: 2, display: 'inline-block', border: '0.5px solid rgba(0,0,0,0.15)' }} />
+                {p.name}
+              </span>
+            ))}
             <span className="flex items-center gap-1" style={{ marginLeft: 8 }}><span style={{ width: 12, height: 12, background: '#fff', borderLeft: '4px solid var(--ink)', borderRadius: 2, display: 'inline-block' }} /> bordure = binôme</span>
           </div>
           {anyEstimated && (
             <p className="text-xs" style={{ color: 'var(--ink-faint)' }}>⚠ Certains temps de trajet sont estimés (routage indisponible ou adresse non géolocalisée — 20 min par défaut).</p>
           )}
+          </div>{/* /planning-grille */}
         </div>
       )}
 
@@ -4441,16 +4496,33 @@ function Parametres({ binomes, setBinomes, poseTypes, setPoseTypes, depot, setDe
             Définit les durées par défaut. Affine ces valeurs avec ton vrai chrono terrain — c'est ce qui transforme la qualité du planning.
           </p>
           <div className="space-y-2">
-            {poseTypes.map((p, i) => (
-              <div key={i} className="grid grid-cols-12 gap-2 items-center">
-                <input className="col-span-7" value={p.name} onChange={e => { const c = [...poseTypes]; c[i].name = e.target.value; setPoseTypes(c); }} />
-                <input className="col-span-3" type="number" min="0.5" step="0.5" value={p.duration} onChange={e => { const c = [...poseTypes]; c[i].duration = parseFloat(e.target.value) || 0; setPoseTypes(c); }} />
-                <button className="col-span-2 text-xs flex items-center gap-1" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-soft)' }}
-                        onClick={() => setPoseTypes(poseTypes.filter((_, j) => j !== i))}>
-                  <I.trash size={12} /> Suppr.
-                </button>
-              </div>
-            ))}
+            <div className="grid gap-1 text-xs font-semibold mb-1" style={{ gridTemplateColumns: '1fr 80px 44px 60px', color: 'var(--ink-soft)' }}>
+              <span>Nom</span><span>Durée (h)</span><span>Couleur</span><span></span>
+            </div>
+            {poseTypes.map((p, i) => {
+              const preview = p.color || '#cccccc';
+              return (
+                <div key={i} className="flex gap-2 items-center">
+                  <input style={{ flex: 1 }} value={p.name} onChange={e => { const c = [...poseTypes]; c[i] = { ...c[i], name: e.target.value }; setPoseTypes(c); }} />
+                  <input style={{ width: 70 }} type="number" min="0.5" step="0.5" value={p.duration} onChange={e => { const c = [...poseTypes]; c[i] = { ...c[i], duration: parseFloat(e.target.value) || 0 }; setPoseTypes(c); }} />
+                  <div style={{ position: 'relative', flexShrink: 0 }}>
+                    <div style={{ width: 32, height: 28, borderRadius: 4, background: preview, border: '2px solid var(--border)', cursor: 'pointer' }}
+                         title="Couleur personnalisée (optionnel — laisse vide pour couleur automatique par durée)"
+                         onClick={() => document.getElementById('cp_' + i).click()} />
+                    <input id={'cp_' + i} type="color" value={p.color || '#ffffff'} style={{ position: 'absolute', opacity: 0, width: 0, height: 0 }}
+                           onChange={e => { const c = [...poseTypes]; c[i] = { ...c[i], color: e.target.value }; setPoseTypes(c); }} />
+                  </div>
+                  {p.color && (
+                    <button title="Retirer la couleur personnalisée" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-soft)', fontSize: 11, flexShrink: 0 }}
+                            onClick={() => { const c = [...poseTypes]; const { color, ...rest } = c[i]; c[i] = rest; setPoseTypes(c); }}>✕</button>
+                  )}
+                  <button className="text-xs flex items-center gap-1" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-soft)', flexShrink: 0 }}
+                          onClick={() => setPoseTypes(poseTypes.filter((_, j) => j !== i))}>
+                    <I.trash size={12} />
+                  </button>
+                </div>
+              );
+            })}
             <button onClick={() => setPoseTypes([...poseTypes, { name: 'Nouveau type', duration: 4, weather: true }])} className="btn-secondary mt-2">
               <I.plus size={14} /> Ajouter un type
             </button>
