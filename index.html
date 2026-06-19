@@ -1190,7 +1190,7 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
     // jours réellement posables pour ce binôme = candidats non bloqués par une indisponibilité
     const locked = (lockedDaysByBin && lockedDaysByBin[binomes[ci].id]) || new Set();
     const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, binomes[ci].id, iso) && !locked.has(iso));
-    if (pool.length) byBin[binomes[ci].id] = await planWeek(pool, depot, workday, days, poseDaysISO, false, closures);
+    if (pool.length) byBin[binomes[ci].id] = await planWeek(pool, depot, workday, days, poseDaysISO, true, closures);
   }
   const ungeocoded = allChantiers.filter(c => !valid.includes(c));
   return { byBin, pools, ungeocoded };
