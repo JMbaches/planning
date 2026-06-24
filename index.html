@@ -349,7 +349,7 @@ const haversineKm = (a, b) => {
 };
 
 /* Cache de géocodage (localStorage) pour ne pas re-géocoder à chaque fois */
-const GEO_CACHE_KEY = 'jmb_geocache_v1';
+const GEO_CACHE_KEY = 'jmb_geocache_v2';
 const normAddr = (s) => (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 
 /* Géocodage via l'API Adresse (Base Adresse Nationale) — gratuit, sans clé */
@@ -359,15 +359,29 @@ async function geocodeFr(address, postalCode, city) {
   const cache = sGet(GEO_CACHE_KEY, {});
   const key = normAddr(full);
   if (cache[key]) return cache[key];
-  const q = encodeURIComponent([address, city].filter(Boolean).join(' ') || full);
-  const url = `https://api-adresse.data.gouv.fr/search/?q=${q}` + (postalCode ? `&postcode=${encodeURIComponent(postalCode)}` : '') + '&limit=1';
-  const r = await fetch(url);
-  if (!r.ok) throw new Error('Géocodage indisponible (' + r.status + ')');
-  const j = await r.json();
-  const f = j.features && j.features[0];
-  if (!f) return null;
-  const [lon, lat] = f.geometry.coordinates;
-  const pt = { lat, lon, label: f.properties.label };
+  const hasStreet = !!(address && address.trim().length > 2);
+  let pt = null;
+  // Étape 1 : recherche rue précise (si adresse renseignée)
+  if (hasStreet) {
+    try {
+      const q = encodeURIComponent([address, city].filter(Boolean).join(' '));
+      const url = `https://api-adresse.data.gouv.fr/search/?q=${q}` + (postalCode ? `&postcode=${encodeURIComponent(postalCode)}` : '') + '&limit=1';
+      const r = await fetch(url);
+      if (r.ok) { const j = await r.json(); const f = j.features?.[0]; if (f) { const [lon, lat] = f.geometry.coordinates; pt = { lat, lon, label: f.properties.label }; } }
+    } catch (_) {}
+  }
+  // Étape 2 : fallback commune (ville seule, ou adresse non trouvée)
+  if (!pt) {
+    const q = encodeURIComponent([city || address, postalCode].filter(Boolean).join(' '));
+    const url = `https://api-adresse.data.gouv.fr/search/?q=${q}&type=municipality&limit=1`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('Géocodage indisponible (' + r.status + ')');
+    const j = await r.json();
+    const f = j.features?.[0];
+    if (!f) return null;
+    const [lon, lat] = f.geometry.coordinates;
+    pt = { lat, lon, label: f.properties.label };
+  }
   cache[key] = pt; sSet(GEO_CACHE_KEY, cache);
   return pt;
 }
@@ -729,8 +743,61 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, pinByDate 
     return ch;
   };
 
-  // On remplit en visant une fin à 18h max → journées pleines.
-  let chunks = buildChunks(DAY_END);
+  // ANCRE EN PREMIER : si le pool contient des _anchor, ceux-ci définissent le centre
+  // géographique de leur jour. Les chantiers flottants sont assignés au jour dont
+  // l'ancre est la plus proche. Sans ancre → buildChunks séquentiel (comportement inchangé).
+  const hasPoolAnchors = pool.some(c => c._anchor);
+  let chunks;
+  if (hasPoolAnchors) {
+    const nDays = poseListEarly.length;
+    chunks = Array.from({ length: nDays }, () => ({ stops: [], legs: [] }));
+    const anchorSet = new Set();
+    // 1. Ancres → jour cible
+    for (let pi = 0; pi < pool.length; pi++) {
+      if (!pool[pi]._anchor) continue;
+      const di = poseListEarly.indexOf(pool[pi].scheduledDate);
+      if (di >= 0) { chunks[di].stops.push(pi); anchorSet.add(pi); }
+    }
+    // 2. Centre géo de chaque jour (barycentre des ancres)
+    const dayGeo = chunks.map(ch => {
+      const gs = ch.stops.map(i => geoByIdx[i]).filter(Boolean);
+      if (!gs.length) return null;
+      return { lat: gs.reduce((s, g) => s + g.lat, 0) / gs.length, lon: gs.reduce((s, g) => s + g.lon, 0) / gs.length };
+    });
+    // 3. Flottants → jour le plus proche (équilibrage de charge inclus)
+    const DAY_CAP_SEC = 8 * 3600;
+    const dayLoad = chunks.map(ch => ch.stops.reduce((s, i) => s + poseSecOf(i), 0));
+    for (const pi of order) {
+      if (anchorSet.has(pi)) continue;
+      const geo = geoByIdx[pi];
+      let bestDay = 0, bestScore = Infinity;
+      for (let di = 0; di < nDays; di++) {
+        const ag = dayGeo[di];
+        const dist = (geo && ag) ? haversineKm(geo, ag) : 0;
+        const score = dist + (dayLoad[di] / DAY_CAP_SEC) * 25;
+        if (score < bestScore && dayLoad[di] + poseSecOf(pi) <= DAY_CAP_SEC) { bestScore = score; bestDay = di; }
+      }
+      // Fallback sans contrainte capacité si tous pleins
+      if (bestScore === Infinity) {
+        bestScore = Infinity;
+        for (let di = 0; di < nDays; di++) {
+          const ag = dayGeo[di];
+          const dist = (geo && ag) ? haversineKm(geo, ag) : 0;
+          if (dist < bestScore) { bestScore = dist; bestDay = di; }
+        }
+      }
+      chunks[bestDay].stops.push(pi);
+      dayLoad[bestDay] += poseSecOf(pi);
+    }
+    // 4. Dans chaque jour : trier par ordre TSP global (optimisation locale du trajet)
+    for (const ch of chunks) {
+      ch.stops.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+      ch.legs = ch.stops.map((s, k) => k === 0 ? legFromDepot(s) : legBetween(ch.stops[k - 1], s));
+    }
+  } else {
+    // On remplit en visant une fin à 18h max → journées pleines.
+    chunks = buildChunks(DAY_END);
+  }
   // Règle JM Bâches : poses du lundi au jeudi (4 jours max), un jour réservé au retour dépôt.
   // poseDaysISO (si fourni) = liste des dates RÉELLEMENT posables (après retrait des indisponibilités).
   const POSE_DAYS = 4;
@@ -1116,11 +1183,10 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
   const assign = new Array(valid.length).fill(0);
   const loadByBin = new Array(k).fill(0); // charge (heures) attribuée à chaque binôme
 
-  // CHANTIERS À HEURE FIXE (urgences placées à la main) : on RESPECTE le binôme choisi et on ne les
-  // réaffecte pas. On note leur index pour les exclure de la répartition géographique automatique.
+  // CHANTIERS FIXÉS (heure fixe ET ancres _anchor) : RESPECTER le binôme, exclure du géo.
   const fixedForced = new Set();
   valid.forEach((c, i) => {
-    if (c.fixedTime && c.scheduledBinome) {
+    if (c.scheduledBinome && (c.fixedTime || c._anchor)) {
       const bi = binomes.findIndex(b => b.id === c.scheduledBinome);
       if (bi >= 0) { assign[i] = bi; loadByBin[bi] += (c.estimatedDuration || 0); fixedForced.add(i); }
     }
@@ -3088,16 +3154,19 @@ ${sign}`,
     // Chantiers avec date+binôme fixés manuellement : affichés via injection dans la grille,
     // pas soumis à l'optimiseur (leurs jours sont verrouillés pour lui).
     const pool = chantiers.filter(c => !(c.status === 'fait' || c.status === 'valide' || c.status === 'en_attente') && !isManuallyFixed(c) && (force || !isFrozenElsewhere(c)) && interv1Planned(c));
-    const mPools = binomes.map(b => ({ bin: b, pool: pool.filter(c => c.scheduledBinome === b.id) }));
+    // Ancres : fixés manuellement cette semaine, non encore validés. L'optimiseur route autour d'eux.
+    // Les 'valide' restent verrouillés (lockedDaysByBin) et préservés par mergeWithLocked.
+    const anchorPool = chantiers.filter(c => isManuallyFixed(c) && inThisWeek(c) && c.status !== 'valide').map(c => ({ ...c, _anchor: true }));
+    const fullPool = [...pool, ...anchorPool];
+    const mPools = binomes.map(b => ({ bin: b, pool: pool.filter(c => c.scheduledBinome === b.id), anchorPool: anchorPool.filter(c => c.scheduledBinome === b.id) }));
     const weekISO = days.slice(0, 4).map(d => toISO(d));
     const closures = (sGet(SK.settings, {}).unavail || []).filter(u => u.scope === 'all').map(u => u.from).filter(Boolean);
     const lockedDaysByBin = {};
     binomes.forEach(b => {
       lockedDaysByBin[b.id] = new Set([
-        // Jours validés : plan conservé par mergeWithLocked
+        // Seuls les jours VALIDÉS restent verrouillés (plan préservé par mergeWithLocked).
+        // Les jours des ancres non-validées sont libres : l'optimiseur les planifie autour d'elles.
         ...chantiers.filter(c => c.status === 'valide' && c.scheduledBinome === b.id && weekISO.includes(c.scheduledDate)).map(c => c.scheduledDate),
-        // Jours avec chantier à date fixée : l'optimiseur ne place rien dessus (affiché via injection)
-        ...chantiers.filter(c => isManuallyFixed(c) && c.scheduledBinome === b.id && weekISO.includes(c.scheduledDate)).map(c => c.scheduledDate),
       ]);
     });
     try {
@@ -3129,18 +3198,20 @@ ${sign}`,
             ? { ...merged[b.id], dayPlans: mergedDayPlans }
             : { ...existing, dayPlans: mergedDayPlans };
         });
-        // POST-TRAITEMENT : effacer tous les events optimizer sur les jours avec chantiers fixés.
-        // L'injection affiche le chantier fixé — pas besoin (ni souhaité) d'avoir du plan optimizer dessus.
-        // Couvre aussi les plans périmés copiés par mergeWithLocked depuis localStorage.
+        // POST-TRAITEMENT : pour les jours avec chantiers fixés, garder le plan
+        // seulement s'il contient un event _anchor posé par l'optimiseur (plan frais).
+        // Sinon l'effacer — l'injection prend le relais comme filet de sécurité.
         binomes.forEach(b => {
           if (!merged[b.id]) return;
           const fixedDays = new Set(
-            chantiers.filter(c => isManuallyFixed(c) && c.scheduledBinome === b.id && weekISO.includes(c.scheduledDate)).map(c => c.scheduledDate)
+            chantiers.filter(c => isManuallyFixed(c) && c.status !== 'valide' && c.scheduledBinome === b.id && weekISO.includes(c.scheduledDate)).map(c => c.scheduledDate)
           );
           if (!fixedDays.size) return;
           const cleaned = {};
           Object.entries(merged[b.id].dayPlans || {}).forEach(([iso, plan]) => {
-            if (!fixedDays.has(iso)) cleaned[iso] = plan;
+            if (!fixedDays.has(iso)) { cleaned[iso] = plan; return; }
+            const hasAnchor = (plan.events || []).some(ev => ev.type === 'pose' && ev.chantier?._anchor);
+            if (hasAnchor) cleaned[iso] = plan;
           });
           merged[b.id] = { ...merged[b.id], dayPlans: cleaned };
         });
@@ -3149,18 +3220,19 @@ ${sign}`,
 
       if (mode === 'auto') {
         setProgress('zones géographiques');
-        const { byBin, pools, ungeocoded } = await autoAssignAndPlan(pool, binomes, depot, workday, days, unavail, lockedDaysByBin, closures);
+        const { byBin, pools, ungeocoded } = await autoAssignAndPlan(fullPool, binomes, depot, workday, days, unavail, lockedDaysByBin, closures);
         setSchedules(mergeWithLocked(byBin));
         setUsedPools(binomes.map(b => ({ bin: b, pool: pools[b.id] || [] })));
         setUngeocoded(ungeocoded);
       } else {
         const next = {};
         const candidateDays = days.slice(0, 4).map(d => toISO(d));
-        for (const { bin, pool: bp } of mPools) {
-          if (!bp.length) continue;
+        for (const { bin, pool: bp, anchorPool: ap } of mPools) {
+          const binPool = [...bp, ...ap];
+          if (!binPool.length) continue;
           setProgress(bin.name);
           const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, bin.id, iso) && !lockedDaysByBin[bin.id].has(iso));
-          next[bin.id] = await planWeek(bp, depot, workday, days, poseDaysISO, true, closures);
+          next[bin.id] = await planWeek(binPool, depot, workday, days, poseDaysISO, false, closures);
         }
         setSchedules(mergeWithLocked(next));
         setUsedPools(mPools);
