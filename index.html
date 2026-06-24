@@ -627,9 +627,11 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, pinByDate 
   const poseListEarly = (Array.isArray(poseDaysISO) && poseDaysISO.length >= 0)
     ? poseDaysISO.slice(0, 4)
     : days.slice(0, 4).map(d => toISO(d));
-  const tooEarly = poolInput.filter(c => windowTooEarly(c, poseListEarly));
-  const late     = poolInput.filter(c => !windowTooEarly(c, poseListEarly) && windowMissesWeek(c, poseListEarly));
-  const inWindow = poolInput.filter(c => !windowTooEarly(c, poseListEarly) && !windowMissesWeek(c, poseListEarly));
+  // Quand pinByDate=true, une date forcée dans la semaine court-circuite notBefore/notAfter
+  const pinnedToWeek = (c) => pinByDate && c.scheduledDate && poseListEarly.includes(c.scheduledDate);
+  const tooEarly = poolInput.filter(c => !pinnedToWeek(c) && windowTooEarly(c, poseListEarly));
+  const late     = poolInput.filter(c => !pinnedToWeek(c) && !windowTooEarly(c, poseListEarly) && windowMissesWeek(c, poseListEarly));
+  const inWindow = poolInput.filter(c => pinnedToWeek(c) || (!windowTooEarly(c, poseListEarly) && !windowMissesWeek(c, poseListEarly)));
   // Les chantiers en retard entrent dans le pool en dernier (priorité basse) avec flag _softWindow
   const pool = [...inWindow, ...late.map(c => ({ ...c, _softWindow: true }))];
   const outOfWindow = tooEarly; // seuls les "trop tôt" sont vraiment hors fenêtre
@@ -1189,7 +1191,8 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
     pools[binomes[ci].id] = pool;
     // jours réellement posables pour ce binôme = candidats non bloqués par une indisponibilité
     const locked = (lockedDaysByBin && lockedDaysByBin[binomes[ci].id]) || new Set();
-    const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, binomes[ci].id, iso) && !locked.has(iso));
+    const pinnedDatesAuto = new Set(pool.filter(c => c.scheduledDate).map(c => c.scheduledDate));
+    const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, binomes[ci].id, iso) && (!locked.has(iso) || pinnedDatesAuto.has(iso)));
     if (pool.length) byBin[binomes[ci].id] = await planWeek(pool, depot, workday, days, poseDaysISO, true, closures);
   }
   const ungeocoded = allChantiers.filter(c => !valid.includes(c));
@@ -3132,7 +3135,8 @@ ${sign}`,
         for (const { bin, pool: bp } of mPools) {
           if (!bp.length) continue;
           setProgress(bin.name);
-          const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, bin.id, iso) && !lockedDaysByBin[bin.id].has(iso));
+          const pinnedDatesManual = new Set(bp.filter(c => c.scheduledDate).map(c => c.scheduledDate));
+          const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, bin.id, iso) && (!lockedDaysByBin[bin.id].has(iso) || pinnedDatesManual.has(iso)));
           next[bin.id] = await planWeek(bp, depot, workday, days, poseDaysISO, true, closures);
         }
         setSchedules(mergeWithLocked(next));
