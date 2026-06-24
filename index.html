@@ -361,7 +361,10 @@ async function geocodeFr(address, postalCode, city) {
   if (cache[key]) return cache[key];
   const q = encodeURIComponent([address, city].filter(Boolean).join(' ') || full);
   const url = `https://api-adresse.data.gouv.fr/search/?q=${q}` + (postalCode ? `&postcode=${encodeURIComponent(postalCode)}` : '') + '&limit=1';
-  const r = await fetch(url);
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 5000);
+  let r;
+  try { r = await fetch(url, { signal: ctrl.signal }); } finally { clearTimeout(tid); }
   if (!r.ok) throw new Error('Géocodage indisponible (' + r.status + ')');
   const j = await r.json();
   const f = j.features && j.features[0];
@@ -1199,7 +1202,11 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
     pools[binomes[ci].id] = pool;
     // jours réellement posables pour ce binôme = candidats non bloqués par une indisponibilité
     const locked = (lockedDaysByBin && lockedDaysByBin[binomes[ci].id]) || new Set();
-    const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, binomes[ci].id, iso) && !locked.has(iso));
+    // Une scheduledDate sur ce binôme court-circuite absences et jours verrouillés.
+    const pinnedDates = new Set(pool.filter(c => c.scheduledDate).map(c => c.scheduledDate));
+    const poseDaysISO = candidateDays.filter(iso =>
+      (pinnedDates.has(iso) || !isUnavailable(unavail, binomes[ci].id, iso)) &&
+      (pinnedDates.has(iso) || !locked.has(iso)));
     if (pool.length) byBin[binomes[ci].id] = await planWeek(pool, depot, workday, days, poseDaysISO, true, closures);
   }
   const ungeocoded = allChantiers.filter(c => !valid.includes(c));
@@ -3148,7 +3155,10 @@ ${sign}`,
         for (const { bin, pool: bp } of mPools) {
           if (!bp.length) continue;
           setProgress(bin.name);
-          const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, bin.id, iso) && !lockedDaysByBin[bin.id].has(iso));
+          const pinnedDates = new Set(bp.filter(c => c.scheduledDate).map(c => c.scheduledDate));
+          const poseDaysISO = candidateDays.filter(iso =>
+            (pinnedDates.has(iso) || !isUnavailable(unavail, bin.id, iso)) &&
+            (pinnedDates.has(iso) || !lockedDaysByBin[bin.id].has(iso)));
           next[bin.id] = await planWeek(bp, depot, workday, days, poseDaysISO, true, closures);
         }
         setSchedules(mergeWithLocked(next));
