@@ -1116,12 +1116,11 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
   const assign = new Array(valid.length).fill(0);
   const loadByBin = new Array(k).fill(0); // charge (heures) attribuée à chaque binôme
 
-  // CHANTIERS FIXÉS : urgences (fixedTime) ET chantiers à date convenue (scheduledDate + scheduledBinome).
-  // On RESPECTE le binôme choisi et on exclut de la répartition géographique automatique.
-  // Ces chantiers restent dans le pool et sont épinglés à leur jour par planWeek (pinByDate=true).
+  // CHANTIERS À HEURE FIXE (urgences placées à la main) : on RESPECTE le binôme choisi et on ne les
+  // réaffecte pas. On note leur index pour les exclure de la répartition géographique automatique.
   const fixedForced = new Set();
   valid.forEach((c, i) => {
-    if (c.scheduledBinome && (c.fixedTime || c.scheduledDate)) {
+    if (c.fixedTime && c.scheduledBinome) {
       const bi = binomes.findIndex(b => b.id === c.scheduledBinome);
       if (bi >= 0) { assign[i] = bi; loadByBin[bi] += (c.estimatedDuration || 0); fixedForced.add(i); }
     }
@@ -1191,8 +1190,7 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
     // jours réellement posables pour ce binôme = candidats non bloqués par une indisponibilité
     const locked = (lockedDaysByBin && lockedDaysByBin[binomes[ci].id]) || new Set();
     const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, binomes[ci].id, iso) && !locked.has(iso));
-    // pinByDate=true : les chantiers avec scheduledDate sont épinglés à leur jour (ancres).
-    if (pool.length) byBin[binomes[ci].id] = await planWeek(pool, depot, workday, days, poseDaysISO, true, closures);
+    if (pool.length) byBin[binomes[ci].id] = await planWeek(pool, depot, workday, days, poseDaysISO, false, closures);
   }
   const ungeocoded = allChantiers.filter(c => !valid.includes(c));
   return { byBin, pools, ungeocoded };
@@ -3089,19 +3087,17 @@ ${sign}`,
     };
     // Chantiers avec date+binôme fixés manuellement : affichés via injection dans la grille,
     // pas soumis à l'optimiseur (leurs jours sont verrouillés pour lui).
-    // Les chantiers à date fixée (isManuallyFixed) sont maintenant INCLUS dans le pool comme ancres :
-    // l'optimiseur les voit, les épingle à leur jour, et organise les autres autour.
-    const pool = chantiers.filter(c => !(c.status === 'fait' || c.status === 'valide' || c.status === 'en_attente') && (force || !isFrozenElsewhere(c)) && interv1Planned(c));
+    const pool = chantiers.filter(c => !(c.status === 'fait' || c.status === 'valide' || c.status === 'en_attente') && !isManuallyFixed(c) && (force || !isFrozenElsewhere(c)) && interv1Planned(c));
     const mPools = binomes.map(b => ({ bin: b, pool: pool.filter(c => c.scheduledBinome === b.id) }));
     const weekISO = days.slice(0, 4).map(d => toISO(d));
     const closures = (sGet(SK.settings, {}).unavail || []).filter(u => u.scope === 'all').map(u => u.from).filter(Boolean);
     const lockedDaysByBin = {};
     binomes.forEach(b => {
       lockedDaysByBin[b.id] = new Set([
-        // Seuls les jours validés sont verrouillés — plan conservé par mergeWithLocked.
-        // Les jours avec chantier à date fixée ne sont PLUS verrouillés : l'optimiseur les inclut
-        // comme ancres (pinByDate=true) et organise les autres chantiers autour.
+        // Jours validés : plan conservé par mergeWithLocked
         ...chantiers.filter(c => c.status === 'valide' && c.scheduledBinome === b.id && weekISO.includes(c.scheduledDate)).map(c => c.scheduledDate),
+        // Jours avec chantier à date fixée : l'optimiseur ne place rien dessus (affiché via injection)
+        ...chantiers.filter(c => isManuallyFixed(c) && c.scheduledBinome === b.id && weekISO.includes(c.scheduledDate)).map(c => c.scheduledDate),
       ]);
     });
     try {
