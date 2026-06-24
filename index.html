@@ -3113,8 +3113,7 @@ ${sign}`,
             merged[b.id] = { dayPlans: {}, assignments: [], overflow: [], count: 0, source: 'fixed' };
           }
         });
-        // Préserver les jours VALIDÉS — sauf si un chantier isManuallyFixed est aussi sur ce jour
-        // (dans ce cas le plan existant peut être périmé ; l'injection affiche le chantier fixé).
+        // Préserver les jours VALIDÉS (comportement original).
         binomes.forEach(b => {
           const validatedDays = new Set(
             chantiers.filter(c => c.status === 'valide' && c.scheduledBinome === b.id && weekISO.includes(c.scheduledDate)).map(c => c.scheduledDate)
@@ -3124,13 +3123,26 @@ ${sign}`,
           if (!existing) return;
           const mergedDayPlans = { ...(merged[b.id]?.dayPlans || {}) };
           validatedDays.forEach(iso => {
-            if (!existing.dayPlans || !existing.dayPlans[iso]) return;
-            const hasFixed = chantiers.some(c => isManuallyFixed(c) && c.scheduledBinome === b.id && c.scheduledDate === iso);
-            if (!hasFixed) mergedDayPlans[iso] = existing.dayPlans[iso];
+            if (existing.dayPlans && existing.dayPlans[iso]) mergedDayPlans[iso] = existing.dayPlans[iso];
           });
           merged[b.id] = merged[b.id]
             ? { ...merged[b.id], dayPlans: mergedDayPlans }
             : { ...existing, dayPlans: mergedDayPlans };
+        });
+        // POST-TRAITEMENT : effacer tous les events optimizer sur les jours avec chantiers fixés.
+        // L'injection affiche le chantier fixé — pas besoin (ni souhaité) d'avoir du plan optimizer dessus.
+        // Couvre aussi les plans périmés copiés par mergeWithLocked depuis localStorage.
+        binomes.forEach(b => {
+          if (!merged[b.id]) return;
+          const fixedDays = new Set(
+            chantiers.filter(c => isManuallyFixed(c) && c.scheduledBinome === b.id && weekISO.includes(c.scheduledDate)).map(c => c.scheduledDate)
+          );
+          if (!fixedDays.size) return;
+          const cleaned = {};
+          Object.entries(merged[b.id].dayPlans || {}).forEach(([iso, plan]) => {
+            if (!fixedDays.has(iso)) cleaned[iso] = plan;
+          });
+          merged[b.id] = { ...merged[b.id], dayPlans: cleaned };
         });
         return merged;
       };
