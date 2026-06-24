@@ -3814,6 +3814,37 @@ ${sign}`,
                             ))}
                             {/* repère 18h (plafond) */}
                             <div style={{ position: 'absolute', top: (18 * 60 - axisStartMin) * PX, left: 0, right: 0, borderTop: '1px dashed var(--accent)', opacity: 0.5 }} />
+                            {/* Chantiers à date fixée : affichés directement depuis chantiers[], indépendamment de l'optimiseur */}
+                            {(() => {
+                              const iso = toISO(d);
+                              const alreadyPlaced = new Set((plan?.events || []).filter(e => e.type === 'pose' && e.chantier).map(e => e.chantier.id));
+                              const fixedHere = chantiers.filter(c =>
+                                c.scheduledDate === iso && c.scheduledBinome === bin.id &&
+                                c.status !== 'fait' && c.status !== 'en_attente' && !alreadyPlaced.has(c.id)
+                              );
+                              if (!fixedHere.length) return null;
+                              let t = computedStart;
+                              return fixedHere.map(c => {
+                                const start = t;
+                                const end = t + (c.estimatedDuration || 4) * 60;
+                                t = end;
+                                const top = Math.round((start - axisStartMin) * PX);
+                                const h = Math.max(Math.round((end - start) * PX), 18);
+                                const pType = (poseTypes || []).find(p => p.name === c.type);
+                                const dc = dureeColor(c.estimatedDuration, c.type, pType?.color);
+                                return (
+                                  <div key={c.id}
+                                    title={`${c.clientName} · ${c.type || ''} · ${c.estimatedDuration}h · Date convenue`}
+                                    onClick={() => { if (setPendingEdit && setTab) { setPendingEdit(c); setTab('chantiers'); } }}
+                                    style={{ position: 'absolute', top, left: 2, right: 2, height: h, background: dc.bg, color: dc.ink, borderRadius: 3, borderLeft: `4px solid ${bin.color}`, padding: '3px 5px 3px 6px', overflow: 'hidden', boxShadow: 'var(--shadow-sm)', outline: '2px solid var(--teal-deep)', outlineOffset: -2, cursor: 'pointer' }}
+                                  >
+                                    <div style={{ fontSize: 10, fontWeight: 700, lineHeight: 1.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>📌 {c.clientName}</div>
+                                    {h > 28 && <div style={{ fontSize: 9, opacity: 0.9, lineHeight: 1.15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.type}</div>}
+                                    {h > 38 && <div style={{ fontSize: 9, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace', lineHeight: 1.2 }}>{[c.postalCode, c.city].filter(Boolean).join(' ')}</div>}
+                                  </div>
+                                );
+                              });
+                            })()}
                             {plan && plan.events.map((ev, i) => {
                               const top = (ev.start - axisStartMin) * PX;
                               const h = Math.max((ev.end - ev.start) * PX, 12);
