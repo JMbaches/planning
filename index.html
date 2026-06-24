@@ -2886,6 +2886,7 @@ function EmploiDuTemps({ chantiers, binomes, depot, workday, unavail, upsert, sh
   const weekEnd = useMemo(() => addDays(weekStart, 7), [weekStart]);
   const inThisWeek = (c) => c.scheduledDate && parseISO(c.scheduledDate) >= weekStart && parseISO(c.scheduledDate) < weekEnd;
   const isFrozenElsewhere = (c) => c.scheduledDate && !inThisWeek(c);
+  const isManuallyFixed = (c) => !!(c.scheduledDate && c.scheduledBinome && c.status !== 'fait' && c.status !== 'en_attente');
 
   const frozenCount = useMemo(() => chantiers.filter(c => c.status !== 'fait' && c.status !== 'en_attente' && isFrozenElsewhere(c)).length, [chantiers, weekStart]);
 
@@ -3084,33 +3085,46 @@ ${sign}`,
       const i1 = chantiers.find(x => x.linkId === c.linkId && x.linkRole === 1);
       return !!(i1 && i1.scheduledDate);
     };
-    const pool = chantiers.filter(c => !(c.status === 'fait' || c.status === 'valide' || c.status === 'en_attente') && (force || !isFrozenElsewhere(c)) && interv1Planned(c));
+    // Chantiers avec date+binôme fixés manuellement : affichés via injection dans la grille,
+    // pas soumis à l'optimiseur (leurs jours sont verrouillés pour lui).
+    const pool = chantiers.filter(c => !(c.status === 'fait' || c.status === 'valide' || c.status === 'en_attente') && !isManuallyFixed(c) && (force || !isFrozenElsewhere(c)) && interv1Planned(c));
     const mPools = binomes.map(b => ({ bin: b, pool: pool.filter(c => c.scheduledBinome === b.id) }));
-    // Jours déjà occupés par un chantier VALIDÉ (verrouillé) cette semaine, par binôme → on n'y replanifie rien.
     const weekISO = days.slice(0, 4).map(d => toISO(d));
-    // Fermetures = jours indisponibles pour tous les binômes (scope 'all')
     const closures = (sGet(SK.settings, {}).unavail || []).filter(u => u.scope === 'all').map(u => u.from).filter(Boolean);
     const lockedDaysByBin = {};
     binomes.forEach(b => {
-      lockedDaysByBin[b.id] = new Set(
-        chantiers.filter(c => c.status === 'valide' && c.scheduledBinome === b.id && weekISO.includes(c.scheduledDate))
-                 .map(c => c.scheduledDate)
-      );
+      lockedDaysByBin[b.id] = new Set([
+        // Jours validés (verrouillés) — plan conservé par mergeWithLocked
+        ...chantiers.filter(c => c.status === 'valide' && c.scheduledBinome === b.id && weekISO.includes(c.scheduledDate)).map(c => c.scheduledDate),
+        // Jours avec chantier à date fixée — l'optimiseur ne génère rien ce jour-là
+        ...chantiers.filter(c => isManuallyFixed(c) && c.scheduledBinome === b.id && weekISO.includes(c.scheduledDate)).map(c => c.scheduledDate),
+      ]);
     });
     try {
       // Fusionne le nouveau calcul avec les dayPlans des jours verrouillés (chantiers validés).
       // Les jours verrouillés gardent leurs données existantes depuis schedules courant.
       const mergeWithLocked = (newByBin) => {
         const merged = { ...newByBin };
+        // Ajouter un res vide pour les binômes qui n'ont que des chantiers à date fixée
+        // (aucun chantier dans le pool optimiseur) — nécessaire pour afficher la grille.
         binomes.forEach(b => {
-          const locked = lockedDaysByBin[b.id];
-          if (!locked || !locked.size) return;
-          const existing = schedules[b.id]; // schedule actuel avant recalcul
+          const hasFixed = chantiers.some(c => isManuallyFixed(c) && c.scheduledBinome === b.id && weekISO.includes(c.scheduledDate));
+          if (!merged[b.id] && hasFixed) {
+            merged[b.id] = { dayPlans: {}, assignments: [], overflow: [], count: 0, source: 'fixed' };
+          }
+        });
+        // Préserver uniquement les jours VALIDÉS (pas les jours fixés — affichés via injection).
+        binomes.forEach(b => {
+          const validatedDays = new Set(
+            chantiers.filter(c => c.status === 'valide' && c.scheduledBinome === b.id && weekISO.includes(c.scheduledDate)).map(c => c.scheduledDate)
+          );
+          if (!validatedDays.size) return;
+          const existing = schedules[b.id];
           if (!existing) return;
           const mergedDayPlans = { ...(merged[b.id]?.dayPlans || {}) };
-          locked.forEach(iso => {
+          validatedDays.forEach(iso => {
             if (existing.dayPlans && existing.dayPlans[iso]) {
-              mergedDayPlans[iso] = existing.dayPlans[iso]; // conserver le jour verrouillé tel quel
+              mergedDayPlans[iso] = existing.dayPlans[iso];
             }
           });
           merged[b.id] = merged[b.id]
@@ -3730,7 +3744,8 @@ ${sign}`,
           {(usedPools || []).map(({ bin, pool }) => {
             const res = schedules[bin.id];
             const hasLocked = res && res.dayPlans && Object.keys(res.dayPlans).length > 0;
-            if (!pool.length && !hasLocked) return null;
+            const hasFixed = chantiers.some(c => isManuallyFixed(c) && c.scheduledBinome === bin.id && inThisWeek(c));
+            if (!pool.length && !hasLocked && !hasFixed) return null;
             const placed = res ? res.assignments.length : 0;
             return (
               <section key={bin.id} className="print-page">
@@ -3788,6 +3803,30 @@ ${sign}`,
                             ))}
                             {/* repère 18h (plafond) */}
                             <div style={{ position: 'absolute', top: (18 * 60 - axisStartMin) * PX, left: 0, right: 0, borderTop: '1px dashed var(--accent)', opacity: 0.5 }} />
+                            {(() => {
+                              const iso = toISO(d);
+                              const alreadyPlaced = new Set((plan?.events || []).filter(e => e.type === 'pose' && e.chantier).map(e => e.chantier.id));
+                              const fixedHere = chantiers.filter(c => isManuallyFixed(c) && c.scheduledDate === iso && c.scheduledBinome === bin.id && !alreadyPlaced.has(c.id));
+                              if (!fixedHere.length) return null;
+                              let t = computedStart;
+                              return fixedHere.map(c => {
+                                const start = t; const end = t + (c.estimatedDuration || 4) * 60; t = end;
+                                const top = Math.round((start - axisStartMin) * PX);
+                                const h = Math.max(Math.round((end - start) * PX), 18);
+                                const pType = (poseTypes || []).find(p => p.name === c.type);
+                                const dc = dureeColor(c.estimatedDuration, c.type, pType?.color);
+                                return (
+                                  <div key={c.id}
+                                    title={`${c.clientName} · ${c.type || ''} · ${c.estimatedDuration}h · Date convenue`}
+                                    onClick={() => { if (setPendingEdit && setTab) { setPendingEdit(c); setTab('chantiers'); } }}
+                                    style={{ position: 'absolute', top, left: 2, right: 2, height: h, background: dc.bg, color: dc.ink, borderRadius: 3, borderLeft: `4px solid ${bin.color}`, padding: '3px 5px 3px 6px', overflow: 'hidden', boxShadow: 'var(--shadow-sm)', outline: '2px solid var(--teal-deep)', outlineOffset: -2, cursor: 'pointer' }}>
+                                    <div style={{ fontSize: 10, fontWeight: 700, lineHeight: 1.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>📌 {c.clientName}</div>
+                                    {h > 28 && <div style={{ fontSize: 9, opacity: 0.9, lineHeight: 1.15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.type}</div>}
+                                    {h > 38 && <div style={{ fontSize: 9, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace', lineHeight: 1.2 }}>{[c.postalCode, c.city].filter(Boolean).join(' ')}</div>}
+                                  </div>
+                                );
+                              });
+                            })()}
                             {plan && plan.events.map((ev, i) => {
                               const top = (ev.start - axisStartMin) * PX;
                               const h = Math.max((ev.end - ev.start) * PX, 12);
