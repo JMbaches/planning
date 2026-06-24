@@ -846,9 +846,9 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, pinByDate 
         const lunchHit = lunchDur && startAfterTravel < lunchStart && startAfterTravel + durMin > lunchStart;
         const realEnd = startAfterTravel + durMin + (lunchHit ? lunchDur : 0);
         if (realEnd > DAY_END) {
-          // Chantier pincé à ce jour : ne jamais reporter, même si ça dépasse 18h
-          if (pinByDate && ch.scheduledDate && ch.scheduledDate === iso) { /* continue normalement */ }
-          else { deferredK.add(k); break; }
+          // Ne tient pas → reporter sans la pousser dans events
+          deferredK.add(k);
+          break; // les stops suivants sont aussi reportés
         }
         if (legMin > 0) { events.push({ type: 'travel', start: t, end: t + legMin, _k: k }); t += legMin; }
         events.push({ type: 'pose', start: t, end: t + durMin, chantier: ch, _k: k, _idx: chunk.stops[k] });
@@ -859,20 +859,17 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, pinByDate 
       events = injectLunch(events, lunchStart, lunchDur);
 
       // TRONCATURE STRICTE À 18h : on parcourt dans l'ordre ; dès qu'un évènement dépasse 18h, on coupe.
-      // Exception : les poses épinglées à ce jour ne sont jamais reportées, même si elles dépassent 18h.
       const capped = [];
       for (const ev of events) {
-        const evPinned = ev.type === 'pose' && pinByDate && ev.chantier && ev.chantier.scheduledDate === iso;
-        if (ev.start >= DAY_END) {                      // commence après 18h
-          if (ev.type === 'pose' && !evPinned) deferredK.add(ev._k);
-          else if (evPinned) capped.push(ev);           // pincé : on garde même après 18h
+        if (ev.start >= DAY_END) {                      // commence après 18h → entièrement reporté
+          if (ev.type === 'pose') deferredK.add(ev._k);
           continue;
         }
         if (ev.end > DAY_END) {                          // chevauche 18h
           if (ev.type === 'pose') {
-            if (evPinned) capped.push(ev);               // pincé : pas de coupe
-            else deferredK.add(ev._k);                   // reporté entièrement
+            deferredK.add(ev._k);                        // toujours reporté entièrement — jamais de coupe
           } else {
+            // trajet inter-chantiers qui déborde 18h : tronqué à 18h (affichage seulement)
             capped.push({ ...ev, end: DAY_END });
           }
           continue;
@@ -1196,7 +1193,7 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
     // jours réellement posables pour ce binôme = candidats non bloqués par une indisponibilité
     const locked = (lockedDaysByBin && lockedDaysByBin[binomes[ci].id]) || new Set();
     const pinnedDatesAuto = new Set(pool.filter(c => c.scheduledDate).map(c => c.scheduledDate));
-    const poseDaysISO = candidateDays.filter(iso => (!isUnavailable(unavail, binomes[ci].id, iso) || pinnedDatesAuto.has(iso)) && (!locked.has(iso) || pinnedDatesAuto.has(iso)));
+    const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, binomes[ci].id, iso) && (!locked.has(iso) || pinnedDatesAuto.has(iso)));
     if (pool.length) byBin[binomes[ci].id] = await planWeek(pool, depot, workday, days, poseDaysISO, true, closures);
   }
   const ungeocoded = allChantiers.filter(c => !valid.includes(c));
@@ -3088,7 +3085,6 @@ ${sign}`,
     // (sinon la 2ᵉ pourrait passer avant la 1ʳᵉ). Elle attendra le prochain calcul, une fois l'interv.1 posée.
     const interv1Planned = (c) => {
       if (!(c.linkId && c.linkRole === 2)) return true;
-      if (c.scheduledDate) return true; // date forcée par l'utilisateur → bypass contrainte d'ordre
       const i1 = chantiers.find(x => x.linkId === c.linkId && x.linkRole === 1);
       return !!(i1 && i1.scheduledDate);
     };
@@ -3146,7 +3142,7 @@ ${sign}`,
           if (!bp.length) continue;
           setProgress(bin.name);
           const pinnedDatesManual = new Set(bp.filter(c => c.scheduledDate).map(c => c.scheduledDate));
-          const poseDaysISO = candidateDays.filter(iso => (!isUnavailable(unavail, bin.id, iso) || pinnedDatesManual.has(iso)) && (!lockedDaysByBin[bin.id].has(iso) || pinnedDatesManual.has(iso)));
+          const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, bin.id, iso) && (!lockedDaysByBin[bin.id].has(iso) || pinnedDatesManual.has(iso)));
           next[bin.id] = await planWeek(bp, depot, workday, days, poseDaysISO, true, closures);
         }
         setSchedules(mergeWithLocked(next));
