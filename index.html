@@ -3112,7 +3112,12 @@ ${sign}`,
           if (!existing) return;
           const mergedDayPlans = { ...(merged[b.id]?.dayPlans || {}) };
           locked.forEach(iso => {
-            if (existing.dayPlans && existing.dayPlans[iso]) {
+            if (!existing.dayPlans || !existing.dayPlans[iso]) return;
+            const newPlan = mergedDayPlans[iso];
+            // Si le nouveau plan a des poses sur ce jour, c'est un chantier pincé manuellement :
+            // on le garde (ne pas écraser) ; le chantier validé reste visible dans le bandeau.
+            const hasNewPose = newPlan && (newPlan.events || []).some(e => e.type === 'pose');
+            if (!hasNewPose) {
               mergedDayPlans[iso] = existing.dayPlans[iso]; // conserver le jour verrouillé tel quel
             }
           });
