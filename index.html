@@ -1910,6 +1910,7 @@ function ChantierForm({ existing, binomes, poseTypes, apiKey, onSave, onCancel, 
                 const t = poseTypes.find(p => p.name === e.target.value);
                 set('type', e.target.value);
                 if (t) { set('estimatedDuration', t.duration); set('weatherSensitive', t.weather); }
+                if (!existing) setTwoVisits(/immerg.*total/i.test(e.target.value));
               }}>
                 <option value="">— Sélectionner —</option>
                 {poseTypes.map(p => <option key={p.name} value={p.name}>{p.name}</option>)}
