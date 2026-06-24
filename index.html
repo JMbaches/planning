@@ -3085,6 +3085,7 @@ ${sign}`,
     // (sinon la 2ᵉ pourrait passer avant la 1ʳᵉ). Elle attendra le prochain calcul, une fois l'interv.1 posée.
     const interv1Planned = (c) => {
       if (!(c.linkId && c.linkRole === 2)) return true;
+      if (c.scheduledDate) return true; // date explicitement forcée → on planifie même si interv.1 n'a pas de date
       const i1 = chantiers.find(x => x.linkId === c.linkId && x.linkRole === 1);
       return !!(i1 && i1.scheduledDate);
     };
