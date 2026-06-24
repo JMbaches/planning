@@ -767,6 +767,7 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, pinByDate 
         const c = pool[ch.stops[k]];
         // Épingler à la date : chantier à heure fixe OU (mode manuel) chantier avec date assignée manuellement
         const isPinned = c.scheduledDate && dayIndexOf(c.scheduledDate) >= 0 && (c.fixedTime || pinByDate);
+        if (c.scheduledDate) console.log('[planning] pinning check', c.clientName, '— scheduledDate=', c.scheduledDate, 'dayIndexOf=', dayIndexOf(c.scheduledDate), 'pinByDate=', pinByDate, '→ isPinned=', isPinned, '| poseList=', poseList);
         if (isPinned) {
           fixedEntries.push({ idx: ch.stops[k] });
         } else { keepS.push(ch.stops[k]); keepL.push(ch.legs[k]); }
@@ -1104,6 +1105,7 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
     let p = null;
     try { p = await geocodeFr(c.address, c.postalCode, c.city); } catch (e) {}
     if (p) { valid.push(c); pts.push(p); }
+    else console.warn('[planning] géocode KO :', c.clientName, '—', c.address, c.postalCode, c.city);
   }
   const k = binomes.length;
 
@@ -1111,6 +1113,17 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
   let depotPt = null;
   if (depot && (depot.address || depot.city || depot.postalCode)) {
     try { depotPt = await geocodeFr(depot.address, depot.postalCode, depot.city); } catch (e) {}
+  }
+
+  // Deuxième chance : chantiers avec date convenue + binôme qui n'ont pas géocodé.
+  // On les inclut avec une position fictive (siège ou centre de la France) pour qu'ils
+  // apparaissent dans le planning — ils seront épinglés à leur date, le TSP ne compte pas.
+  const fallbackPt = depotPt || { lat: 45.75, lon: 4.85 };
+  for (const c of allChantiers) {
+    if (!valid.includes(c) && (c.fixedTime || c.scheduledDate) && c.scheduledBinome) {
+      console.warn('[planning] date convenue sans géocode → inclusion avec position fictive :', c.clientName, c.scheduledDate);
+      valid.push(c); pts.push(fallbackPt);
+    }
   }
   const FAR_KM = 250;       // au-delà de 250 km du siège = chantier "lointain"
   const CLUSTER_KM = 80;    // deux chantiers lointains à < 80 km = même zone lointaine
@@ -1126,7 +1139,10 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
   valid.forEach((c, i) => {
     if ((c.fixedTime || c.scheduledDate) && c.scheduledBinome) {
       const bi = binomes.findIndex(b => b.id === c.scheduledBinome);
-      if (bi >= 0) { assign[i] = bi; loadByBin[bi] += (c.estimatedDuration || 0); fixedForced.add(i); }
+      if (bi >= 0) { assign[i] = bi; loadByBin[bi] += (c.estimatedDuration || 0); fixedForced.add(i); console.log('[planning] fixé :', c.clientName, '→ binôme', binomes[bi].name, '/', c.scheduledDate); }
+      else console.warn('[planning] binôme introuvable pour', c.clientName, '— scheduledBinome=', c.scheduledBinome);
+    } else if (c.scheduledDate) {
+      console.log('[planning] date convenue mais pas de binôme (géo libre) :', c.clientName, c.scheduledDate);
     }
   });
 
@@ -3093,6 +3109,14 @@ ${sign}`,
       return !!(i1 && i1.scheduledDate);
     };
     const pool = chantiers.filter(c => !(c.status === 'fait' || c.status === 'valide' || c.status === 'en_attente') && (force || !isFrozenElsewhere(c)) && interv1Planned(c));
+    // Debug : chantiers avec date convenue exclus du pool
+    chantiers.filter(c => c.scheduledDate).forEach(c => {
+      const excluded = (c.status === 'fait' || c.status === 'valide' || c.status === 'en_attente');
+      const frozen = !force && isFrozenElsewhere(c);
+      const i1 = !interv1Planned(c);
+      if (!pool.includes(c)) console.warn('[planning] exclu du pool :', c.clientName, c.scheduledDate, '— status=', c.status, 'frozenElsewhere=', frozen, 'interv1=', i1, 'excluded=', excluded);
+      else console.log('[planning] dans le pool :', c.clientName, c.scheduledDate, 'scheduledBinome=', c.scheduledBinome);
+    });
     const mPools = binomes.map(b => ({ bin: b, pool: pool.filter(c => c.scheduledBinome === b.id) }));
     // Jours déjà occupés par un chantier VALIDÉ (verrouillé) cette semaine, par binôme → on n'y replanifie rien.
     const weekISO = days.slice(0, 4).map(d => toISO(d));
@@ -3711,6 +3735,35 @@ ${sign}`,
             </div>
           </div>
         )}
+        {(() => {
+          if (!Object.keys(schedules).length) return null;
+          const allAssigned = new Set(Object.values(schedules).flatMap(s => (s?.assignments || []).map(a => a.id)));
+          const poseISO = [0,1,2,3].map(i => toISO(addDays(weekStart, i)));
+          const missing = chantiers.filter(c =>
+            c.scheduledDate && poseISO.includes(c.scheduledDate) &&
+            c.status !== 'valide' && c.status !== 'fait' && c.status !== 'en_attente' &&
+            !allAssigned.has(c.id)
+          );
+          if (!missing.length) return null;
+          return (
+            <div className="card p-4 mt-4 no-print flex items-start gap-3" style={{ borderLeft: '3px solid #E67E22', background: '#FEF3E2' }}>
+              <span style={{ color: '#E67E22', marginTop: 2 }}><I.alert size={18} /></span>
+              <div className="flex-1 min-w-0">
+                <div className="font-medium text-sm" style={{ color: '#E67E22' }}>
+                  {missing.length} chantier{missing.length > 1 ? 's' : ''} avec date convenue absent{missing.length > 1 ? 's' : ''} du planning proposé
+                </div>
+                <div className="text-xs mt-1" style={{ color: 'var(--ink-soft)' }}>
+                  <strong>{missing.map(c => `${c.clientName} (${fmtDate(c.scheduledDate)}${c.scheduledBinome ? '' : ' — aucun binôme'})`).join(' · ')}</strong>
+                </div>
+                <div className="text-xs mt-1" style={{ color: 'var(--ink-faint)' }}>
+                  {missing.some(c => !c.scheduledBinome)
+                    ? 'Ces chantiers n\'ont pas encore de binôme — lance une première optimisation et accepte-la pour qu\'un binôme leur soit attribué.'
+                    : 'Ouvre la console navigateur (F12) pour voir le détail. Cause possible : statut inattendu, date hors période posable, ou chargement en cours.'}
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {!hasAny ? (
