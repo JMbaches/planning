@@ -1098,7 +1098,7 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, pinByDate 
 
 /* Géocode tous les chantiers, les répartit par zone entre les binômes,
    puis planifie la semaine de chaque zone. */
-async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, unavail, lockedDaysByBin, closures = [], forceReassign = false) {
+async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, unavail, lockedDaysByBin, closures = []) {
   const valid = [], pts = [];
   for (const c of allChantiers) {
     let p = null;
@@ -1119,12 +1119,11 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
   const assign = new Array(valid.length).fill(0);
   const loadByBin = new Array(k).fill(0); // charge (heures) attribuée à chaque binôme
 
-  // CHANTIERS À DATE/HEURE FIXE avec binôme déjà choisi : on RESPECTE le binôme et on ne les
-  // réaffecte pas géographiquement. Règle : fixedTime (urgence horaire) OU scheduledDate déjà
-  // convenu avec le client — sauf si forceReassign=true (bouton "Tout réoptimiser").
+  // CHANTIERS À HEURE FIXE (urgences placées à la main) : on RESPECTE le binôme choisi et on ne les
+  // réaffecte pas. On note leur index pour les exclure de la répartition géographique automatique.
   const fixedForced = new Set();
   valid.forEach((c, i) => {
-    if ((c.fixedTime || (!forceReassign && c.scheduledDate)) && c.scheduledBinome) {
+    if (c.fixedTime && c.scheduledBinome) {
       const bi = binomes.findIndex(b => b.id === c.scheduledBinome);
       if (bi >= 0) { assign[i] = bi; loadByBin[bi] += (c.estimatedDuration || 0); fixedForced.add(i); }
     }
@@ -3135,7 +3134,7 @@ ${sign}`,
 
       if (mode === 'auto') {
         setProgress('zones géographiques');
-        const { byBin, pools, ungeocoded } = await autoAssignAndPlan(pool, binomes, depot, workday, days, unavail, lockedDaysByBin, closures, force);
+        const { byBin, pools, ungeocoded } = await autoAssignAndPlan(pool, binomes, depot, workday, days, unavail, lockedDaysByBin, closures);
         setSchedules(mergeWithLocked(byBin));
         setUsedPools(binomes.map(b => ({ bin: b, pool: pools[b.id] || [] })));
         setUngeocoded(ungeocoded);
