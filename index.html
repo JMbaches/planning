@@ -808,7 +808,8 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, pinByDate 
       const keptStops = [], keptLegs = [];
       for (let k = 0; k < chunk.stops.length; k++) {
         const ch = pool[chunk.stops[k]];
-        if (dateAllowed(ch, iso)) { keptStops.push(chunk.stops[k]); keptLegs.push(chunk.legs[k]); }
+        const isManualPin = pinByDate && ch.scheduledDate === iso;
+        if (isManualPin || dateAllowed(ch, iso)) { keptStops.push(chunk.stops[k]); keptLegs.push(chunk.legs[k]); }
         else overflow.push(ch);
       }
       if (keptStops.length === 0) continue; // plus rien à poser ce jour-là
@@ -3174,7 +3175,11 @@ ${sign}`,
           const interv2 = chantiers.find(x => x.linkId === c.linkId && x.linkRole === 2);
           if (interv2) {
             const minDate = toISO(addDays(parseISO(d1), (c.linkGap || 0)));
-            if (interv2.notBefore !== minDate) upsert({ ...interv2, notBefore: minDate });
+            if (interv2.notBefore !== minDate) {
+              const patch = { ...interv2, notBefore: minDate };
+              if (patch.scheduledDate && patch.scheduledDate < minDate) patch.scheduledDate = '';
+              upsert(patch);
+            }
           }
         }
       }
@@ -3783,7 +3788,6 @@ ${sign}`,
                             onDrop={isDragTarget ? e => {
                                 e.preventDefault();
                                 const raw = e.dataTransfer.getData('chantier');
-                                console.log('[drop] raw=', raw, 'binId=', bin.id, 'iso=', toISO(d));
                                 if (!raw) return;
                                 try { const c = JSON.parse(raw); dropOnDay(c, bin.id, toISO(d)); }
                                 catch(err) { console.error('[drop] parse error', err); }
