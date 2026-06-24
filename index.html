@@ -3113,9 +3113,8 @@ ${sign}`,
             merged[b.id] = { dayPlans: {}, assignments: [], overflow: [], count: 0, source: 'fixed' };
           }
         });
-        // Préserver les jours VALIDÉS : copier l'ancien dayPlan SEULEMENT s'il contient
-        // réellement le chantier validé (évite de restaurer un plan périmé d'une ancienne
-        // optimisation qui placerait un autre chantier sur ce jour par erreur).
+        // Préserver les jours VALIDÉS — sauf si un chantier isManuallyFixed est aussi sur ce jour
+        // (dans ce cas le plan existant peut être périmé ; l'injection affiche le chantier fixé).
         binomes.forEach(b => {
           const validatedDays = new Set(
             chantiers.filter(c => c.status === 'valide' && c.scheduledBinome === b.id && weekISO.includes(c.scheduledDate)).map(c => c.scheduledDate)
@@ -3126,13 +3125,8 @@ ${sign}`,
           const mergedDayPlans = { ...(merged[b.id]?.dayPlans || {}) };
           validatedDays.forEach(iso => {
             if (!existing.dayPlans || !existing.dayPlans[iso]) return;
-            const validChantiers = chantiers.filter(c => c.status === 'valide' && c.scheduledBinome === b.id && c.scheduledDate === iso);
-            const planHasValide = validChantiers.some(vc =>
-              (existing.dayPlans[iso].events || []).some(ev => ev.chantier && ev.chantier.id === vc.id)
-            );
-            if (planHasValide) mergedDayPlans[iso] = existing.dayPlans[iso];
-            // Si le plan existant ne contient pas le chantier validé (plan périmé),
-            // on ne copie pas — l'injection affichera le chantier validé correctement.
+            const hasFixed = chantiers.some(c => isManuallyFixed(c) && c.scheduledBinome === b.id && c.scheduledDate === iso);
+            if (!hasFixed) mergedDayPlans[iso] = existing.dayPlans[iso];
           });
           merged[b.id] = merged[b.id]
             ? { ...merged[b.id], dayPlans: mergedDayPlans }
