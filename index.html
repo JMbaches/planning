@@ -627,11 +627,9 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, pinByDate 
   const poseListEarly = (Array.isArray(poseDaysISO) && poseDaysISO.length >= 0)
     ? poseDaysISO.slice(0, 4)
     : days.slice(0, 4).map(d => toISO(d));
-  // Quand pinByDate=true, une date forcée dans la semaine court-circuite notBefore/notAfter
-  const pinnedToWeek = (c) => pinByDate && c.scheduledDate && poseListEarly.includes(c.scheduledDate);
-  const tooEarly = poolInput.filter(c => !pinnedToWeek(c) && windowTooEarly(c, poseListEarly));
-  const late     = poolInput.filter(c => !pinnedToWeek(c) && !windowTooEarly(c, poseListEarly) && windowMissesWeek(c, poseListEarly));
-  const inWindow = poolInput.filter(c => pinnedToWeek(c) || (!windowTooEarly(c, poseListEarly) && !windowMissesWeek(c, poseListEarly)));
+  const tooEarly = poolInput.filter(c => windowTooEarly(c, poseListEarly));
+  const late     = poolInput.filter(c => !windowTooEarly(c, poseListEarly) && windowMissesWeek(c, poseListEarly));
+  const inWindow = poolInput.filter(c => !windowTooEarly(c, poseListEarly) && !windowMissesWeek(c, poseListEarly));
   // Les chantiers en retard entrent dans le pool en dernier (priorité basse) avec flag _softWindow
   const pool = [...inWindow, ...late.map(c => ({ ...c, _softWindow: true }))];
   const outOfWindow = tooEarly; // seuls les "trop tôt" sont vraiment hors fenêtre
@@ -808,8 +806,7 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, pinByDate 
       const keptStops = [], keptLegs = [];
       for (let k = 0; k < chunk.stops.length; k++) {
         const ch = pool[chunk.stops[k]];
-        const isManualPin = pinByDate && ch.scheduledDate === iso;
-        if (isManualPin || dateAllowed(ch, iso)) { keptStops.push(chunk.stops[k]); keptLegs.push(chunk.legs[k]); }
+        if (dateAllowed(ch, iso)) { keptStops.push(chunk.stops[k]); keptLegs.push(chunk.legs[k]); }
         else overflow.push(ch);
       }
       if (keptStops.length === 0) continue; // plus rien à poser ce jour-là
@@ -1112,16 +1109,6 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
   if (depot && (depot.address || depot.city || depot.postalCode)) {
     try { depotPt = await geocodeFr(depot.address, depot.postalCode, depot.city); } catch (e) {}
   }
-
-  // Deuxième chance : chantiers avec date convenue + binôme qui n'ont pas géocodé.
-  // On les inclut avec une position fictive (siège ou centre de la France) pour qu'ils
-  // apparaissent dans le planning — ils seront épinglés à leur date, le TSP ne compte pas.
-  const fallbackPt = depotPt || { lat: 45.75, lon: 4.85 };
-  for (const c of allChantiers) {
-    if (!valid.includes(c) && (c.fixedTime || c.scheduledDate) && c.scheduledBinome) {
-      valid.push(c); pts.push(fallbackPt);
-    }
-  }
   const FAR_KM = 250;       // au-delà de 250 km du siège = chantier "lointain"
   const CLUSTER_KM = 80;    // deux chantiers lointains à < 80 km = même zone lointaine
 
@@ -1129,12 +1116,11 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
   const assign = new Array(valid.length).fill(0);
   const loadByBin = new Array(k).fill(0); // charge (heures) attribuée à chaque binôme
 
-  // CHANTIERS À DATE/HEURE FIXE avec binôme déjà choisi : on RESPECTE le binôme et on ne les
-  // réaffecte pas géographiquement. Concerne fixedTime (urgence horaire) ET scheduledDate
-  // (date convenue avec le client). Priorité absolue : le reste de la semaine s'adapte autour.
+  // CHANTIERS À HEURE FIXE (urgences placées à la main) : on RESPECTE le binôme choisi et on ne les
+  // réaffecte pas. On note leur index pour les exclure de la répartition géographique automatique.
   const fixedForced = new Set();
   valid.forEach((c, i) => {
-    if ((c.fixedTime || c.scheduledDate) && c.scheduledBinome) {
+    if (c.fixedTime && c.scheduledBinome) {
       const bi = binomes.findIndex(b => b.id === c.scheduledBinome);
       if (bi >= 0) { assign[i] = bi; loadByBin[bi] += (c.estimatedDuration || 0); fixedForced.add(i); }
     }
@@ -1203,9 +1189,7 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
     pools[binomes[ci].id] = pool;
     // jours réellement posables pour ce binôme = candidats non bloqués par une indisponibilité
     const locked = (lockedDaysByBin && lockedDaysByBin[binomes[ci].id]) || new Set();
-    const pinnedDatesAuto = new Set(pool.filter(c => c.scheduledDate).map(c => c.scheduledDate));
-    // Une date forcée (scheduledDate) court-circuite isUnavailable ET les jours verrouillés.
-    const poseDaysISO = candidateDays.filter(iso => (!isUnavailable(unavail, binomes[ci].id, iso) || pinnedDatesAuto.has(iso)) && (!locked.has(iso) || pinnedDatesAuto.has(iso)));
+    const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, binomes[ci].id, iso) && !locked.has(iso));
     if (pool.length) byBin[binomes[ci].id] = await planWeek(pool, depot, workday, days, poseDaysISO, true, closures);
   }
   const ungeocoded = allChantiers.filter(c => !valid.includes(c));
@@ -1922,7 +1906,6 @@ function ChantierForm({ existing, binomes, poseTypes, apiKey, onSave, onCancel, 
                 const t = poseTypes.find(p => p.name === e.target.value);
                 set('type', e.target.value);
                 if (t) { set('estimatedDuration', t.duration); set('weatherSensitive', t.weather); }
-                if (!existing) setTwoVisits(/immerg.*total/i.test(e.target.value));
               }}>
                 <option value="">— Sélectionner —</option>
                 {poseTypes.map(p => <option key={p.name} value={p.name}>{p.name}</option>)}
@@ -2906,14 +2889,6 @@ function EmploiDuTemps({ chantiers, binomes, depot, workday, unavail, upsert, sh
 
   const frozenCount = useMemo(() => chantiers.filter(c => c.status !== 'fait' && c.status !== 'en_attente' && isFrozenElsewhere(c)).length, [chantiers, weekStart]);
 
-  // Liste détaillée des chantiers figés sur d'autres semaines (avec date fixée),
-  // triée chronologiquement — affichée sous les boutons d'optimisation.
-  const frozenList = useMemo(() =>
-    chantiers
-      .filter(c => c.status !== 'fait' && c.status !== 'en_attente' && c.scheduledDate && isFrozenElsewhere(c))
-      .sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate)),
-    [chantiers, weekStart]);
-
   // Indisponibilités tombant sur les jours de pose (lun→jeu) de la semaine affichée
   const weekUnavail = useMemo(() => {
     const poseISO = [0, 1, 2, 3].map(i => toISO(addDays(weekStart, i)));
@@ -3106,7 +3081,6 @@ ${sign}`,
     // (sinon la 2ᵉ pourrait passer avant la 1ʳᵉ). Elle attendra le prochain calcul, une fois l'interv.1 posée.
     const interv1Planned = (c) => {
       if (!(c.linkId && c.linkRole === 2)) return true;
-      if (c.scheduledDate) return true; // date explicitement forcée → on planifie même si interv.1 n'a pas de date
       const i1 = chantiers.find(x => x.linkId === c.linkId && x.linkRole === 1);
       return !!(i1 && i1.scheduledDate);
     };
@@ -3135,12 +3109,7 @@ ${sign}`,
           if (!existing) return;
           const mergedDayPlans = { ...(merged[b.id]?.dayPlans || {}) };
           locked.forEach(iso => {
-            if (!existing.dayPlans || !existing.dayPlans[iso]) return;
-            const newPlan = mergedDayPlans[iso];
-            // Si le nouveau plan a des poses sur ce jour, c'est un chantier pincé manuellement :
-            // on le garde (ne pas écraser) ; le chantier validé reste visible dans le bandeau.
-            const hasNewPose = newPlan && (newPlan.events || []).some(e => e.type === 'pose');
-            if (!hasNewPose) {
+            if (existing.dayPlans && existing.dayPlans[iso]) {
               mergedDayPlans[iso] = existing.dayPlans[iso]; // conserver le jour verrouillé tel quel
             }
           });
@@ -3163,9 +3132,7 @@ ${sign}`,
         for (const { bin, pool: bp } of mPools) {
           if (!bp.length) continue;
           setProgress(bin.name);
-          const pinnedDatesManual = new Set(bp.filter(c => c.scheduledDate).map(c => c.scheduledDate));
-          // Une date forcée court-circuite isUnavailable ET les jours verrouillés.
-          const poseDaysISO = candidateDays.filter(iso => (!isUnavailable(unavail, bin.id, iso) || pinnedDatesManual.has(iso)) && (!lockedDaysByBin[bin.id].has(iso) || pinnedDatesManual.has(iso)));
+          const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, bin.id, iso) && !lockedDaysByBin[bin.id].has(iso));
           next[bin.id] = await planWeek(bp, depot, workday, days, poseDaysISO, true, closures);
         }
         setSchedules(mergeWithLocked(next));
@@ -3198,11 +3165,7 @@ ${sign}`,
           const interv2 = chantiers.find(x => x.linkId === c.linkId && x.linkRole === 2);
           if (interv2) {
             const minDate = toISO(addDays(parseISO(d1), (c.linkGap || 0)));
-            if (interv2.notBefore !== minDate) {
-              const patch = { ...interv2, notBefore: minDate };
-              if (patch.scheduledDate && patch.scheduledDate < minDate) patch.scheduledDate = '';
-              upsert(patch);
-            }
+            if (interv2.notBefore !== minDate) upsert({ ...interv2, notBefore: minDate });
           }
         }
       }
@@ -3692,37 +3655,9 @@ ${sign}`,
             <I.trash size={13} /> Supprimer tous les plannings
           </button>
         </div>
-        {frozenList.length > 0 && !forceAll && (
-          <div className="card mt-3 p-3" style={{ borderLeft: '3px solid var(--teal-deep)', background: 'var(--surface-2)' }}>
-            <div className="text-xs font-medium flex items-center gap-1 mb-2" style={{ color: 'var(--teal-deep)' }}>
-              <I.clock size={13} />
-              {frozenList.length} chantier{frozenList.length > 1 ? 's' : ''} avec date convenue sur d'autres semaines — exclu{frozenList.length > 1 ? 's' : ''} de cette optimisation
-            </div>
-            <div className="flex flex-col gap-1">
-              {frozenList.map(c => {
-                const targetWeek = getWeekStart(parseISO(c.scheduledDate));
-                const targetLabel = `S${getISOWeek(targetWeek)} · ${targetWeek.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })}`;
-                const dateLabel = parseISO(c.scheduledDate).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'long' });
-                return (
-                  <div key={c.id} className="flex items-center gap-2 text-xs">
-                    <span className="font-medium" style={{ minWidth: 140 }}>{c.clientName}</span>
-                    <span style={{ color: 'var(--ink-soft)' }}>{dateLabel}</span>
-                    {c.scheduledBinome && <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'var(--border)', color: 'var(--ink-soft)' }}>{binomes.find(b => b.id === c.scheduledBinome)?.name || c.scheduledBinome}</span>}
-                    <button
-                      onClick={() => setWeekStart(targetWeek)}
-                      className="btn-secondary ml-auto"
-                      style={{ padding: '3px 8px', fontSize: 11, whiteSpace: 'nowrap' }}
-                      title={`Naviguer vers la semaine du ${targetLabel}`}
-                    >
-                      <I.chevR size={11} /> {targetLabel}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="text-xs mt-2" style={{ color: 'var(--ink-faint)' }}>
-              Utilise « Tout réoptimiser » pour les inclure dans la semaine courante.
-            </div>
+        {frozenCount > 0 && !forceAll && (
+          <div className="text-xs mt-3 flex items-center gap-1" style={{ color: 'var(--ink-faint)' }}>
+            <I.clock size={12} /> {frozenCount} chantier{frozenCount > 1 ? 's' : ''} déjà planifié{frozenCount > 1 ? 's' : ''} sur d'autres semaines {frozenCount > 1 ? 'sont figés' : 'est figé'} et exclu{frozenCount > 1 ? 's' : ''} de cette optimisation. Utilise « Tout réoptimiser » pour les inclure.
           </div>
         )}
         {forceAll && hasSchedules && (
@@ -3757,35 +3692,6 @@ ${sign}`,
             </div>
           </div>
         )}
-        {(() => {
-          if (!Object.keys(schedules).length) return null;
-          const allAssigned = new Set(Object.values(schedules).flatMap(s => (s?.assignments || []).map(a => a.id)));
-          const poseISO = [0,1,2,3].map(i => toISO(addDays(weekStart, i)));
-          const missing = chantiers.filter(c =>
-            c.scheduledDate && poseISO.includes(c.scheduledDate) &&
-            c.status !== 'valide' && c.status !== 'fait' && c.status !== 'en_attente' &&
-            !allAssigned.has(c.id)
-          );
-          if (!missing.length) return null;
-          return (
-            <div className="card p-4 mt-4 no-print flex items-start gap-3" style={{ borderLeft: '3px solid #E67E22', background: '#FEF3E2' }}>
-              <span style={{ color: '#E67E22', marginTop: 2 }}><I.alert size={18} /></span>
-              <div className="flex-1 min-w-0">
-                <div className="font-medium text-sm" style={{ color: '#E67E22' }}>
-                  {missing.length} chantier{missing.length > 1 ? 's' : ''} avec date convenue absent{missing.length > 1 ? 's' : ''} du planning proposé
-                </div>
-                <div className="text-xs mt-1" style={{ color: 'var(--ink-soft)' }}>
-                  <strong>{missing.map(c => `${c.clientName} (${fmtDate(c.scheduledDate)}${c.scheduledBinome ? '' : ' — aucun binôme'})`).join(' · ')}</strong>
-                </div>
-                <div className="text-xs mt-1" style={{ color: 'var(--ink-faint)' }}>
-                  {missing.some(c => !c.scheduledBinome)
-                    ? 'Ces chantiers n\'ont pas encore de binôme — lance une première optimisation et accepte-la pour qu\'un binôme leur soit attribué.'
-                    : 'Ouvre la console navigateur (F12) pour voir le détail. Cause possible : statut inattendu, date hors période posable, ou chargement en cours.'}
-                </div>
-              </div>
-            </div>
-          );
-        })()}
       </div>
 
       {!hasAny ? (
@@ -3868,6 +3774,7 @@ ${sign}`,
                             onDrop={isDragTarget ? e => {
                                 e.preventDefault();
                                 const raw = e.dataTransfer.getData('chantier');
+                                console.log('[drop] raw=', raw, 'binId=', bin.id, 'iso=', toISO(d));
                                 if (!raw) return;
                                 try { const c = JSON.parse(raw); dropOnDay(c, bin.id, toISO(d)); }
                                 catch(err) { console.error('[drop] parse error', err); }
