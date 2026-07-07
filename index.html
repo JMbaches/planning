@@ -781,9 +781,8 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
     // le premier flottant placé sur un jour encore vide et voisin d'un jour validé est choisi le
     // plus proche possible de cette ancre — pour construire une tournée cohérente autour du point
     // déjà fixé plutôt que de zigzaguer sans le savoir.
-    // IMPORTANT : le jour validé est retiré de poseList en amont (lockedDaysByBin) — « voisin » se
-    // calcule donc sur le VRAI jour calendaire (veille/lendemain), pas sur l'index précédent/suivant
-    // dans poseList (qui peut sauter par-dessus le jour validé manquant).
+    // « Voisin » se calcule sur le VRAI jour calendaire (veille/lendemain via les dates ISO), pas sur
+    // l'index dans poseList — robuste même si un jour intermédiaire est indisponible.
     const dayAnchorGeo = chunks.map((ch, di) => {
       if (ch.stops.length) return null; // jour déjà occupé par un verrouillé, pas besoin d'ancre externe
       const iso = poseList[di];
@@ -972,9 +971,18 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
     // pose à cette heure et on réagence les autres poses autour. On CONSERVE les temps de trajet entre
     // chantiers et la pause déjeuner. Si l'heure demandée n'est pas atteignable (trajets + poses avant
     // + déjeuner la dépassent), on cale l'ancre au plus tôt possible et on le signale (anchorLate).
-    const fixedHere = events.find(ev => ev.type === 'pose' && ev.chantier && ev.chantier.fixedTime && ev.chantier.scheduledDate === iso);
+    // Un chantier a un ANCRAGE horaire si : heure imposée (fixedTime), OU chantier VALIDÉ marqué
+    // « après-midi » (slot 'pm' → début d'après-midi, déjeuner fini). Un validé « matin » (ou sans
+    // slot) n'a pas besoin d'ancrage : les verrouillés sont déjà placés en tête de journée, donc le
+    // matin. On garantit ainsi la demi-journée promise au client (matin reste matin, aprem reste aprem).
+    const anchorMinFor = (c, fallback) => {
+      if (c.fixedTime) return parseHHMM(c.fixedTime, fallback);
+      if (c.status === 'valide' && c.slot === 'pm') return lunchStart + lunchDur;
+      return null;
+    };
+    const fixedHere = events.find(ev => ev.type === 'pose' && ev.chantier && ev.chantier.scheduledDate === iso && anchorMinFor(ev.chantier, null) != null);
     if (fixedHere) {
-      const want = parseHHMM(fixedHere.chantier.fixedTime, fixedHere.start);
+      const want = anchorMinFor(fixedHere.chantier, fixedHere.start);
       // Récupère les poses dans l'ordre, avec le trajet qui précède chacune (0 pour la 1re du jour).
       // injectLunch a pu couper une pose en deux (contd) : on refusionne par durée réelle du chantier.
       const poseSeq = [];
@@ -1280,26 +1288,6 @@ async function planSingleDay(existingChantiers, newChantier, depot, workday, day
   return { error: 'no_fit' };
 }
 
-/* Construit le plan d'UNE journée à partir de RIEN pour une liste de chantiers (typiquement un
-   jour de chantiers déjà VALIDÉS), en réutilisant planSingleDay par insertions successives (chaque
-   chantier s'insère au meilleur endroit parmi ceux déjà posés ce jour-là, temps de trajet réels).
-   Sert à donner aux jours verrouillés le MÊME traitement d'approche (dépôt vs enchaînement depuis la
-   veille) que les jours flottants — voir dayMeta.approachFromDepot/approachSec.
-   Ne doit jamais déprogrammer un chantier validé : si l'insertion déborderait, renvoie { error:'no_fit' }
-   plutôt que d'écarter un chantier verrouillé en silence. */
-async function planFixedDay(chantiersList, depot, workday, dayMeta = {}) {
-  if (!chantiersList.length) return { ok: true, events: [], endMin: null, totalDriveSec: 0, siegeReturnSec: 0, staysOnSite: false, displaced: [] };
-  let acc = [];
-  let result = null;
-  for (const ch of chantiersList) {
-    result = await planSingleDay(acc, ch, depot, workday, dayMeta);
-    if (!result.ok) return result;
-    if (result.displaced.length) return { error: 'no_fit' };
-    acc = [...acc, ch];
-  }
-  return result;
-}
-
 /* =========================================================================
    AFFECTATION AUTO PAR ZONE — k-means géographique (1 cluster par binôme)
    ========================================================================= */
@@ -1398,8 +1386,22 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
     lointain.forEach(i => zones[zoneOf[i]].push(i));
     // zones les plus grosses d'abord (pour bien réserver une semaine entière au plus gros déplacement)
     zones.sort((A, B) => B.reduce((s, i) => s + (valid[i].estimatedDuration || 0), 0) - A.reduce((s, i) => s + (valid[i].estimatedDuration || 0), 0));
+    // AIMANT SECTEUR : si un chantier VALIDÉ (déjà fixé sur un binôme) est dans le même secteur qu'une
+    // zone lointaine, TOUTE la zone rejoint CE binôme — pour qu'un long déplacement serve à plusieurs
+    // poses du coin, pas à une seule. Sinon, la zone va au binôme le moins chargé (comportement d'origine).
+    const SECTOR_ANCHOR_KM = 80;
+    const zoneAnchoredBin = (zone) => {
+      let bestBi = -1, bestDist = Infinity;
+      zone.forEach(i => binomes.forEach((b, bi) => {
+        (validatedAnchors[b.id] || []).forEach(p => { const d = haversineKm(pts[i], p); if (d < bestDist) { bestDist = d; bestBi = bi; } });
+      }));
+      return (bestBi >= 0 && bestDist <= SECTOR_ANCHOR_KM) ? bestBi : -1;
+    };
     zones.forEach(zone => {
-      let best = 0; for (let b = 1; b < k; b++) if (loadByBin[b] < loadByBin[best]) best = b;
+      const anchored = zoneAnchoredBin(zone);
+      let best;
+      if (anchored >= 0) best = anchored;
+      else { best = 0; for (let b = 1; b < k; b++) if (loadByBin[b] < loadByBin[best]) best = b; }
       zone.forEach(i => { assign[i] = best; const h = (valid[i].estimatedDuration || 0); loadByBin[best] += h; farLoadByBin[best] += h; });
     });
   }
@@ -1466,9 +1468,10 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
   for (let ci = 0; ci < binomes.length; ci++) {
     const pool = valid.filter((_, i) => assign[i] === ci);
     pools[binomes[ci].id] = pool;
-    // jours réellement posables pour ce binôme = candidats non bloqués par une indisponibilité
-    const locked = (lockedDaysByBin && lockedDaysByBin[binomes[ci].id]) || new Set();
-    const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, binomes[ci].id, iso) && !locked.has(iso));
+    // Jours réellement posables = candidats non bloqués par une indisponibilité. Les jours des chantiers
+    // validés RESTENT posables : le validé y est placé comme arrêt verrouillé et le reste du jour se
+    // remplit normalement (plus de jour « réservé » exclu du calcul).
+    const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, binomes[ci].id, iso));
     if (pool.length) byBin[binomes[ci].id] = await planWeek(pool, depot, workday, days, poseDaysISO, closures, validatedAnchors[binomes[ci].id] || []);
   }
   const ungeocoded = allChantiers.filter(c => !valid.includes(c));
@@ -1930,7 +1933,7 @@ function Chantiers({ chantiers, binomes, poseTypes, apiKey, upsert, del, showToa
               onArchive={() => { upsert({ ...c, archived: !c.archived }); showToast(c.archived ? 'Chantier désarchivé' : 'Chantier archivé'); }}
               onToggleValidate={() => {
                 if (c.status === 'valide') { upsert({ ...c, status: 'planifie' }); showToast('Chantier dévalidé'); }
-                else if (c.scheduledDate && c.scheduledBinome) { upsert({ ...c, status: 'valide' }); showToast('Chantier validé (verrouillé)'); }
+                else if (c.scheduledDate && c.scheduledBinome) { upsert({ ...c, status: 'valide', slot: c.slot || 'am' }); showToast('Chantier validé (verrouillé)'); }
               }}
               onDelete={() => { if (confirm('Supprimer ce chantier ?')) { del(c.id); showToast('Chantier supprimé'); } }} />
           ))}
@@ -2313,6 +2316,9 @@ function QuickModal({ chantier, binomes, onClose, onSave }) {
   const [date, setDate] = useState(chantier.scheduledDate || '');
   const [binId, setBinId] = useState(chantier.scheduledBinome || '');
   const [fixedTime, setFixedTime] = useState(chantier.fixedTime || '');
+  // Moment de la journée : 'am' (matin), 'pm' (après-midi) ou 'fixed' (heure précise = fixedTime).
+  // C'est ce qu'on annonce au client à la validation : un validé du matin reste le matin.
+  const [slotMode, setSlotMode] = useState(chantier.fixedTime ? 'fixed' : (chantier.slot === 'pm' ? 'pm' : 'am'));
   const [status, setStatus] = useState(chantier.status || 'a_planifier');
   const canValidate = !!(date && binId && status !== 'en_attente'); // on ne valide qu'un chantier ayant date + binôme, hors attente
   const submit = (forceStatus) => {
@@ -2320,11 +2326,14 @@ function QuickModal({ chantier, binomes, onClose, onSave }) {
     if (newStatus === 'valide' && !canValidate) newStatus = status; // garde-fou
     const finalDate = newStatus === 'en_attente' ? '' : date;
     const finalBinId = newStatus === 'en_attente' ? '' : binId;
-    const finalFixedTime = newStatus === 'en_attente' ? '' : fixedTime;
+    const useFixed = slotMode === 'fixed' && newStatus !== 'en_attente';
+    const finalFixedTime = useFixed ? fixedTime : '';
+    // Demi-journée : dérivée de l'heure précise si fournie, sinon le choix matin/après-midi.
+    const finalSlot = newStatus === 'en_attente' ? '' : (useFixed ? (parseHHMM(fixedTime, 480) < 720 ? 'am' : 'pm') : slotMode);
     if (finalDate && finalBinId && newStatus === 'a_planifier') newStatus = 'planifie';
     // Cette modale sert précisément à FIXER une date+binôme à la main : on marque le choix comme
     // manuel pour qu'aucune réoptimisation future ne le déplace (voir planWeek : c.manualDate).
-    onSave({ ...chantier, scheduledDate: finalDate, scheduledBinome: finalBinId, fixedTime: finalFixedTime || '', status: newStatus, manualDate: !!(finalDate && finalBinId) });
+    onSave({ ...chantier, scheduledDate: finalDate, scheduledBinome: finalBinId, fixedTime: finalFixedTime || '', slot: finalSlot, status: newStatus, manualDate: !!(finalDate && finalBinId) });
   };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6 no-print" style={{ background: 'rgba(26,26,26,0.5)' }}>
@@ -2338,9 +2347,19 @@ function QuickModal({ chantier, binomes, onClose, onSave }) {
         </div>
         <div className="space-y-3 mb-6">
           <Field label="Date"><input type="date" value={date} onChange={e => setDate(e.target.value)} /></Field>
-          <Field label="Heure approximative (optionnel)">
-            <input type="time" value={fixedTime} onChange={e => setFixedTime(e.target.value)} step="900" />
-            <p className="text-xs mt-1" style={{ color: 'var(--ink-faint)' }}>Pour une urgence à caser à un moment précis (ex : 14:00). Le chantier sera placé au plus près de cette heure dans la journée.</p>
+          <Field label="Moment de la journée">
+            <div className="flex gap-2">
+              {[['am', 'Matin'], ['pm', 'Après-midi'], ['fixed', 'Heure précise']].map(([v, label]) => (
+                <button key={v} type="button" onClick={() => setSlotMode(v)}
+                  className="flex-1 text-sm rounded px-2 py-1.5" style={{ border: '1px solid var(--border)', background: slotMode === v ? 'var(--ink)' : 'transparent', color: slotMode === v ? 'var(--paper)' : 'var(--ink)', cursor: 'pointer' }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {slotMode === 'fixed' && (
+              <input type="time" value={fixedTime} onChange={e => setFixedTime(e.target.value)} step="900" className="mt-2" />
+            )}
+            <p className="text-xs mt-1" style={{ color: 'var(--ink-faint)' }}>Ce qu'on annonce au client. Un chantier validé le matin reste le matin. « Heure précise » pour une urgence à caser pile à une heure.</p>
           </Field>
           <Field label="Binôme">
             <select value={binId} onChange={e => setBinId(e.target.value)}>
@@ -3211,7 +3230,7 @@ function EmploiDuTemps({ chantiers, binomes, depot, workday, unavail, upsert, sh
 
   const toggleValidate = (c) => {
     if (c.status === 'valide') { upsert({ ...c, status: 'planifie' }); showToast && showToast('Chantier dévalidé'); }
-    else if (c.scheduledDate && c.scheduledBinome) { upsert({ ...c, status: 'valide' }); showToast && showToast('Chantier validé (verrouillé)'); }
+    else if (c.scheduledDate && c.scheduledBinome) { upsert({ ...c, status: 'valide', slot: c.slot || 'am' }); showToast && showToast('Chantier validé (verrouillé)'); }
   };
 
   // Ouvre la messagerie avec un e-mail de confirmation de la date de pose, pré-rempli.
@@ -3374,113 +3393,32 @@ ${sign}`,
       const i1 = chantiers.find(x => x.linkId === c.linkId && x.linkRole === 1);
       return !!(i1 && i1.scheduledDate);
     };
-    const pool = chantiers.filter(c => !(c.status === 'fait' || c.status === 'valide' || c.status === 'en_attente') && (force || !isFrozenElsewhere(c)) && interv1Planned(c));
-    const mPools = binomes.map(b => ({ bin: b, pool: pool.filter(c => c.scheduledBinome === b.id) }));
-    // Jours déjà occupés par un chantier VALIDÉ (verrouillé) cette semaine, par binôme → on n'y replanifie rien.
     const weekISO = days.slice(0, 4).map(d => toISO(d));
+    // Pool à planifier : chantiers flottants (comme avant) + chantiers VALIDÉS de CETTE semaine. Les
+    // validés entrent désormais dans le calcul normal comme arrêts verrouillés (isLockedChantier) :
+    // planWeek les place sur leur jour + binôme et remplit le reste autour — plus de calcul isolé/caché.
+    // Un validé d'une AUTRE semaine reste exclu (il appartient à sa propre semaine).
+    const pool = chantiers.filter(c => {
+      if (c.status === 'fait' || c.status === 'en_attente') return false;
+      if (c.status === 'valide') return weekISO.includes(c.scheduledDate) && interv1Planned(c);
+      return (force || !isFrozenElsewhere(c)) && interv1Planned(c);
+    });
+    const mPools = binomes.map(b => ({ bin: b, pool: pool.filter(c => c.scheduledBinome === b.id) }));
     // Fermetures = jours indisponibles pour tous les binômes (scope 'all')
     const closures = (sGet(SK.settings, {}).unavail || []).filter(u => u.scope === 'all').map(u => u.from).filter(Boolean);
-    const lockedDaysByBin = {}; const validatedByBin = {};
+    // Ancres géographiques = chantiers validés de la semaine (servent d'aimant secteur en mode auto).
+    const validatedByBin = {};
     binomes.forEach(b => {
-      const validated = chantiers.filter(c => c.status === 'valide' && c.scheduledBinome === b.id && weekISO.includes(c.scheduledDate));
-      validatedByBin[b.id] = validated;
-      lockedDaysByBin[b.id] = new Set(validated.map(c => c.scheduledDate));
+      validatedByBin[b.id] = chantiers.filter(c => c.status === 'valide' && c.scheduledBinome === b.id && weekISO.includes(c.scheduledDate));
     });
     try {
-      // Fusionne le nouveau calcul avec le plan des jours verrouillés (chantiers validés).
-      // Un jour validé est FIGÉ DÉFINITIVEMENT dans un stockage à part (SK.validatedPlans), jamais
-      // effacé par "Supprimer tous les plannings" ni recalculé par un futur "Optimiser" — tant que
-      // l'ensemble des chantiers validés de ce jour ne change pas (nouvelle validation/dévalidation),
-      // les horaires affichés sont exactement ceux figés la première fois, quoi qu'il arrive ensuite
-      // (dépôt modifié, autre chantier édité, aléas réseau du géocodage, etc.).
-      const mergeWithLocked = async (newByBin) => {
-        const merged = { ...newByBin };
-        const store = sGet(SK.validatedPlans, {});
-        let storeChanged = false;
-        for (const b of binomes) {
-          const validated = validatedByBin[b.id];
-          if (!validated.length) continue;
-          const byDay = {};
-          validated.forEach(c => { (byDay[c.scheduledDate] = byDay[c.scheduledDate] || []).push(c); });
-          const mergedDayPlans = { ...(merged[b.id]?.dayPlans || {}) };
-          // NB : volontairement, les chantiers validés ne sont PAS ajoutés à `assignments` — ce tableau
-          // sert de pool source au drag&drop (dropOnDay) et à « Appliquer » ; les y mêler les exposerait
-          // à être replanifiés par erreur lors d'un déplacement d'un AUTRE chantier.
-          // Traiter les jours dans l'ordre calendaire : un jour validé peut servir d'ancre (« veille »)
-          // au jour validé suivant, il faut donc que mergedDayPlans[prevISO] soit déjà posé.
-          const sortedDays = Object.entries(byDay).sort((a, z) => a[0].localeCompare(z[0]));
-          for (const [iso, group] of sortedDays) {
-            const key = b.id + '_' + iso;
-            const currentIds = group.map(c => c.id).sort().join(',');
-            const cached = store[key];
-            if (cached && cached.chantierIds === currentIds) {
-              mergedDayPlans[iso] = cached.dayPlan; // FIGÉ — jamais recalculé
-              continue;
-            }
-            // 1re validation de ce jour, ou composition changée (ajout/retrait d'un chantier validé) :
-            // on calcule une fois, puis on fige — les validations futures sur d'AUTRES jours ne
-            // toucheront jamais ce résultat.
-            try {
-              // Le jour validé doit suivre la MÊME règle de trajet qu'un jour flottant : partir du
-              // dernier chantier de la veille si c'est plus proche que le dépôt, pas bêtement du dépôt
-              // à chaque fois (sinon un chantier validé loin du siège mais à 13 min du chantier de la
-              // veille se voit un trajet fantôme de plusieurs heures, au point de ne plus rentrer dans
-              // la journée et de disparaître silencieusement en overflow).
-              const prevISO = toISO(addDays(parseISO(iso), -1));
-              const prevPlan = mergedDayPlans[prevISO] || merged[b.id]?.dayPlans?.[prevISO];
-              const prevLastChantier = prevPlan ? [...(prevPlan.events || [])].reverse().find(e => e.type === 'pose')?.chantier : null;
-              let dayMeta = { approachFromDepot: true, approachSec: 0, isLastPoseDay: true, staysOnSite: false };
-              if (prevLastChantier && group[0]) {
-                try {
-                  const [pg, fg] = await Promise.all([
-                    geocodeFr(prevLastChantier.address, prevLastChantier.postalCode, prevLastChantier.city),
-                    geocodeFr(group[0].address, group[0].postalCode, group[0].city),
-                  ]);
-                  if (pg && fg) {
-                    const linkDm = await durationMatrix([pg, fg]);
-                    const linkSec = linkDm.matrix?.[0]?.[1];
-                    let depotSec = null;
-                    if (depot && (depot.address || depot.city || depot.postalCode)) {
-                      const dp = await geocodeFr(depot.address, depot.postalCode, depot.city);
-                      if (dp) { const depotDm = await durationMatrix([dp, fg]); depotSec = depotDm.matrix?.[0]?.[1]; }
-                    }
-                    if (typeof linkSec === 'number' && (depotSec == null || linkSec < depotSec)) {
-                      dayMeta = { approachFromDepot: false, approachSec: linkSec, isLastPoseDay: true, staysOnSite: false };
-                    }
-                  }
-                } catch (e) { /* échec du géocodage d'ancrage → repli sur l'approche dépôt par défaut */ }
-              }
-              const built = await planFixedDay(group, depot, workday, dayMeta);
-              if (built.ok) {
-                const dayPlan = {
-                  events: built.events, endMin: built.endMin, totalDriveSec: built.totalDriveSec,
-                  approachSec: dayMeta.approachSec, eveningSec: 0, eveningReturn: false,
-                  source: 'osrm', oversized: false, siegeReturnSec: built.siegeReturnSec,
-                  staysOnSite: built.staysOnSite, isLastPoseDay: true,
-                };
-                mergedDayPlans[iso] = dayPlan;
-                store[key] = { chantierIds: currentIds, dayPlan };
-                storeChanged = true;
-              } else if (cached) {
-                mergedDayPlans[iso] = cached.dayPlan;
-              }
-            } catch (e) {
-              console.error('[mergeWithLocked] échec calcul jour validé', e);
-              if (cached) mergedDayPlans[iso] = cached.dayPlan; // au pire, garder l'ancien figé plutôt que rien
-            }
-          }
-          merged[b.id] = merged[b.id]
-            ? { ...merged[b.id], dayPlans: mergedDayPlans }
-            : { dayPlans: mergedDayPlans, assignments: [], overflow: [], count: 0, source: 'valide' };
-        }
-        if (storeChanged) sSet(SK.validatedPlans, store);
-        return merged;
-      };
-
+      // Les chantiers validés font partie du pool et sont plaqués sur leur jour + binôme par planWeek
+      // (arrêts verrouillés), avec le reste de la semaine construit AUTOUR d'eux dans la même tournée.
+      // Plus de fusion/cache séparé : une seule passe de calcul par binôme, comme pour tout le reste.
       if (mode === 'auto') {
         setProgress('zones géographiques');
-        const { byBin, pools, ungeocoded } = await autoAssignAndPlan(pool, binomes, depot, workday, days, unavail, lockedDaysByBin, closures, validatedByBin);
-        setSchedules(await mergeWithLocked(byBin));
+        const { byBin, pools, ungeocoded } = await autoAssignAndPlan(pool, binomes, depot, workday, days, unavail, {}, closures, validatedByBin);
+        setSchedules(byBin);
         setUsedPools(binomes.map(b => ({ bin: b, pool: pools[b.id] || [] })));
         setUngeocoded(ungeocoded);
       } else {
@@ -3489,7 +3427,7 @@ ${sign}`,
         for (const { bin, pool: bp } of mPools) {
           if (!bp.length) continue;
           setProgress(bin.name);
-          const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, bin.id, iso) && !lockedDaysByBin[bin.id].has(iso));
+          const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, bin.id, iso));
           // Ancres géographiques (chantiers déjà validés cette semaine pour ce binôme) : orientent le
           // premier chantier d'un jour voisin encore vide vers ce qui est géographiquement cohérent.
           const anchors = [];
@@ -3498,7 +3436,7 @@ ${sign}`,
           }
           next[bin.id] = await planWeek(bp, depot, workday, days, poseDaysISO, closures, anchors);
         }
-        setSchedules(await mergeWithLocked(next));
+        setSchedules(next);
         setUsedPools(mPools);
       }
     } catch (e) {
