@@ -1168,6 +1168,114 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
   return { dayPlans, assignments, overflow, source, count: pool.length, depotGeo, outOfWindow };
 }
 
+/* Insère un chantier dans le plan d'UN SEUL jour d'un binôme, sans jamais toucher aux autres jours
+   de la semaine (contrairement à un appel à planWeek sur tout le pool du binôme, qui peut redistribuer
+   n'importe quel jour et vider celui visé par le glisser-déposer). Ne recompose que les chantiers déjà
+   présents ce jour-là + le nouveau (petit lot, tournée optimisée dessus). dayMeta reprend le contexte
+   du jour tel qu'il était (approche depuis le dépôt ou nuit précédente, dernier jour de pose ou pas) —
+   volontairement PAS recalculé, car ça dépend des jours voisins qu'on ne veut pas toucher.
+   Limite connue : si un chantier du jour a un fixedTime, il n'est pas ré-ancré précisément à son heure
+   (cas rare en combinaison avec un drag&drop sur le même jour) — la journée reste correcte en durée,
+   juste pas optimale sur ce point précis.
+   Renvoie soit { ok:true, events, endMin, totalDriveSec, siegeReturnSec, staysOnSite, displaced }
+   soit { error: 'geocode' | 'no_fit' }. */
+async function planSingleDay(existingChantiers, newChantier, depot, workday, dayMeta = {}) {
+  const dayStart   = parseHHMM(workday?.start, 480);
+  const DAY_END    = 18 * 60;
+  const lunchStart = parseHHMM(workday?.lunchStart, 720);
+  const lunchDur   = workday?.lunchDuration ?? 60;
+  const hasDepot   = !!(depot && (depot.address || depot.city || depot.postalCode));
+  const SIEGE_SEUIL_SEC = 1.5 * 3600;
+  const RETOUR_MAX = 19 * 60;
+  const approachFromDepot = dayMeta.approachFromDepot !== false;
+  const fixedApproachSec = dayMeta.approachSec || 0;
+
+  const geocodeAll = (list) => Promise.all(list.map(c => geocodeFr(c.address, c.postalCode, c.city).catch(() => null)));
+  const existingGeo = await geocodeAll(existingChantiers);
+  const [newGeo] = await geocodeAll([newChantier]);
+  if (existingGeo.some(g => !g) || !newGeo) return { error: 'geocode' };
+
+  let depotGeo = null;
+  if (hasDepot) depotGeo = await geocodeFr(depot.address, depot.postalCode, depot.city).catch(() => null);
+
+  const points = [...(depotGeo ? [depotGeo] : []), ...existingGeo, newGeo];
+  let matrix = null;
+  try { const dm = await durationMatrix(points); matrix = dm.matrix; } catch (e) { matrix = null; }
+  const off = depotGeo ? 1 : 0;
+  const cell = (i, j) => {
+    if (!matrix) return 20 * 60;
+    const v = matrix[i] && matrix[i][j];
+    return (typeof v === 'number' && isFinite(v)) ? v : 20 * 60;
+  };
+  const legFromDepot = (i) => depotGeo ? cell(0, off + i) : 0;
+  const legToDepot   = (i) => depotGeo ? cell(off + i, 0) : 0;
+  const legBetween   = (i, j) => cell(off + i, off + j);
+  const m = existingChantiers.length;
+  const newIdx = m; // le nouveau chantier occupe l'index m dans la liste combinée existing+[new]
+  const durMin = (c) => (c.estimatedDuration || 0) * 60;
+
+  // Construit la timeline d'une séquence donnée (indices 0..m-1 = existing, m = nouveau).
+  // Renvoie null si un chantier de la séquence déborderait 18h (aucune coupe : on rejette la position).
+  const buildSeq = (seq) => {
+    let t = dayStart;
+    const events = [];
+    let aSec;
+    if (seq[0] === newIdx) {
+      if (!approachFromDepot) return null; // approche "nuit précédente" : pas de point de référence connu
+      aSec = legFromDepot(newIdx);
+    } else {
+      aSec = approachFromDepot ? legFromDepot(seq[0]) : fixedApproachSec;
+    }
+    let driveSec = aSec;
+    if (aSec > 0) { events.push({ type: 'travelApproach', start: t, end: t + aSec / 60, fromDepot: approachFromDepot }); t += aSec / 60; }
+    for (let k = 0; k < seq.length; k++) {
+      const idx = seq[k];
+      const ch = idx === newIdx ? newChantier : existingChantiers[idx];
+      if (k > 0) {
+        const legSec = legBetween(seq[k - 1], seq[k]);
+        driveSec += legSec;
+        const legMin = legSec / 60;
+        events.push({ type: 'travel', start: t, end: t + legMin }); t += legMin;
+      }
+      const d = durMin(ch);
+      const lunchHit = lunchDur && t < lunchStart && t + d > lunchStart;
+      const realEnd = t + d + (lunchHit ? lunchDur : 0);
+      if (realEnd > DAY_END) return null;
+      events.push({ type: 'pose', start: t, end: t + d, chantier: ch });
+      t += d;
+    }
+    const withLunch = injectLunch(events, lunchStart, lunchDur);
+    const lastPose = [...withLunch].reverse().find(e => e.type === 'pose');
+    const endMin = lastPose ? lastPose.end : t;
+    return { events: withLunch, endMin, driveSec, lastIdx: seq[seq.length - 1] };
+  };
+
+  const baseSeq = existingChantiers.map((_, i) => i);
+  const candidates = [];
+  for (let p = 0; p <= m; p++) {
+    const built = buildSeq([...baseSeq.slice(0, p), newIdx, ...baseSeq.slice(p)]);
+    if (built) candidates.push(built);
+  }
+  if (candidates.length) {
+    candidates.sort((a, b) => a.driveSec - b.driveSec);
+    const best = candidates[0];
+    const siegeReturnSec = dayMeta.isLastPoseDay ? 0 : (depotGeo ? legToDepot(best.lastIdx) : 0);
+    const staysOnSite = !dayMeta.isLastPoseDay
+      && ((best.endMin + siegeReturnSec / 60) > RETOUR_MAX || siegeReturnSec > SIEGE_SEUIL_SEC || !!dayMeta.staysOnSite);
+    return { ok: true, events: best.events, endMin: best.endMin, totalDriveSec: best.driveSec, siegeReturnSec, staysOnSite, displaced: [] };
+  }
+
+  // Rien ne rentre avec tous les chantiers existants du jour : on tente de libérer de la place en
+  // retirant, un par un (jamais un verrouillé), le chantier le plus tardif de la séquence actuelle.
+  const removable = existingChantiers.map((c, i) => ({ c, i })).filter(({ c }) => !isLockedChantier(c)).reverse();
+  for (const { c: toRemove, i: removeIdx } of removable) {
+    const remaining = existingChantiers.filter((_, i) => i !== removeIdx);
+    const res = await planSingleDay(remaining, newChantier, depot, workday, dayMeta);
+    if (res.ok) return { ...res, displaced: [toRemove, ...res.displaced] };
+  }
+  return { error: 'no_fit' };
+}
+
 /* =========================================================================
    AFFECTATION AUTO PAR ZONE — k-means géographique (1 cluster par binôme)
    ========================================================================= */
@@ -3030,7 +3138,7 @@ function EmploiDuTemps({ chantiers, binomes, depot, workday, unavail, upsert, sh
   const [exportMenu, setExportMenu] = useState(false); // affiche le choix d'export Excel
   const [dragChantier, setDragChantier] = useState(null); // { id, binId } en cours de drag
   const [dragOverCol, setDragOverCol] = useState(null);   // 'binId_iso' survolé pendant le drag
-  const [dropProposal, setDropProposal] = useState(null); // { chantierObj, binId, iso, bin, currentPlan, proposedResult }
+  const [dropProposal, setDropProposal] = useState(null); // { chantierObj, binId, iso, bin, currentPlan, result }
   const [dropConfirmStep, setDropConfirmStep] = useState(1); // 2 = l'utilisateur a vu la liste des chantiers déprogrammés et confirme quand même
 
   const weekKey = useMemo(() => toISO(weekStart), [weekStart]); // clé d'enregistrement = lundi ISO
@@ -3372,7 +3480,8 @@ ${sign}`,
     try { localStorage.setItem('jmb_dirty_since', String(Date.now())); } catch (e) {}
   };
 
-  // Drag & drop : calcule la proposition et affiche la modale de confirmation
+  // Drag & drop : calcule la proposition pour LE SEUL jour ciblé (planSingleDay) — les autres jours
+  // de la semaine du binôme ne sont jamais recalculés ni déprogrammés par un drag&drop.
   const dropOnDay = async (chantierObj, binId, iso) => {
     setDragChantier(null); setDragOverCol(null);
     if (!chantierObj || !binId || !iso) return;
@@ -3383,53 +3492,57 @@ ${sign}`,
     const updated = { ...chantierObj, scheduledBinome: binId, scheduledDate: iso, status: 'planifie', manualDate: true };
     setComputing(true); setProgress('Calcul de la proposition…');
     try {
-      // depot, workday, unavail sont déjà disponibles via les props d'EmploiDuTemps
       const existingRes = schedules[binId];
-      const existingPool = existingRes
-        ? existingRes.assignments.map(a => chantiers.find(c => c.id === a.id)).filter(Boolean)
-        : [];
-      const alreadyIn = existingPool.some(c => c.id === updated.id);
-      const binPool = alreadyIn
-        ? existingPool.map(c => c.id === updated.id ? updated : c)
-        : [...existingPool, updated];
-      const lockedDays = new Set(
-        chantiers.filter(c => c.scheduledBinome === binId && c.status === 'valide' && c.scheduledDate)
-          .map(c => c.scheduledDate)
-      );
-      const poseDaysISO = days.slice(0, 4).map(d => toISO(d))
-        .filter(d => !isUnavailable(unavail, binId, d) && !lockedDays.has(d));
-      const closures = (sGet(SK.settings, {}).unavail || []).filter(u => u.scope === 'all').map(u => u.from).filter(Boolean);
-      const proposedResult = await planWeek(binPool, depot, workday, days, poseDaysISO, closures);
-      // Chantiers que la recomposition du binôme déborderait, EN PLUS du nouveau déposé — c'est ce que
-      // confirmDropProposal déprogrammerait. Calculé une seule fois, servira à la fois à l'affichage
-      // et à l'action, pour ne jamais divergent entre ce qui est montré et ce qui est fait.
-      const displaced = (proposedResult.overflow || []).filter(c => {
-        if (c.id === updated.id) return false;
-        const existing = chantiers.find(x => x.id === c.id);
-        return existing && existing.scheduledBinome === binId && existing.status !== 'valide' && existing.status !== 'fait';
-      });
-      // Afficher la modale de confirmation avec avant/après
+      const currentPlan = existingRes?.dayPlans?.[iso] || null;
+      // Chantiers déjà posés CE jour-là (dans leur ordre actuel), en excluant le déposé lui-même
+      // au cas où il s'agit d'un déplacement à l'intérieur du même jour.
+      const existingDayChantiers = (currentPlan?.events || [])
+        .filter(e => e.type === 'pose' && e.chantier)
+        .map(e => chantiers.find(c => c.id === e.chantier.id) || e.chantier)
+        .filter(c => c.id !== updated.id);
+      const dayMeta = {
+        approachSec: currentPlan?.approachSec || 0,
+        approachFromDepot: currentPlan ? !!(currentPlan.events || []).find(e => e.type === 'travelApproach')?.fromDepot : true,
+        isLastPoseDay: currentPlan?.isLastPoseDay ?? true,
+        staysOnSite: currentPlan?.staysOnSite || false,
+      };
+      const result = await planSingleDay(existingDayChantiers, updated, depot, workday, dayMeta);
       setDropConfirmStep(1);
-      setDropProposal({ chantierObj, updated, binId, iso, bin, currentPlan: existingRes, proposedResult, displaced });
+      setDropProposal({ chantierObj, updated, binId, iso, bin, currentPlan, result });
     } catch(e) { console.error('[dropOnDay] erreur:', e); setError(String(e)); }
     finally { setComputing(false); setProgress(''); }
   };
 
   const confirmDropProposal = () => {
     if (!dropProposal) return;
-    const { updated, binId, proposedResult, displaced } = dropProposal;
-    // Si d'autres chantiers seraient déprogrammés, une 2e confirmation explicite est obligatoire
-    // (voir la modale) — on ne déprogramme jamais rien silencieusement en un seul clic.
-    if (displaced.length > 0 && dropConfirmStep < 2) return;
+    const { updated, binId, iso, result, currentPlan } = dropProposal;
+    if (!result?.ok) return;
+    // Si d'autres chantiers de CE jour seraient déprogrammés, une 2e confirmation explicite est
+    // obligatoire (voir la modale) — on ne déprogramme jamais rien silencieusement en un seul clic.
+    if (result.displaced.length > 0 && dropConfirmStep < 2) return;
     // Appliquer le nouveau chantier droppé
     upsert(updated);
-    // Déprogrammer les chantiers que la recomposition du binôme a fait déborder (liste déjà validée
-    // par l'utilisateur à l'écran précédent de la modale).
-    displaced.forEach(c => {
+    // Déprogrammer les chantiers de CE jour que l'insertion a fait déborder (liste déjà validée par
+    // l'utilisateur à l'écran précédent de la modale) — jamais un autre jour de la semaine.
+    result.displaced.forEach(c => {
       const existing = chantiers.find(x => x.id === c.id);
       if (existing) upsert({ ...existing, scheduledDate: '', scheduledBinome: '', status: 'a_planifier' });
     });
-    setSchedules(prev => ({ ...prev, [binId]: proposedResult }));
+    setSchedules(prev => {
+      const prevRes = prev[binId] || { dayPlans: {}, assignments: [], overflow: [], count: 0 };
+      const dayPlans = { ...prevRes.dayPlans, [iso]: {
+        events: result.events, endMin: result.endMin, totalDriveSec: result.totalDriveSec,
+        approachSec: currentPlan?.approachSec ?? 0, eveningSec: currentPlan?.eveningSec, eveningReturn: currentPlan?.eveningReturn,
+        source: currentPlan?.source || 'osrm', oversized: false,
+        siegeReturnSec: result.siegeReturnSec, staysOnSite: result.staysOnSite,
+        isLastPoseDay: currentPlan?.isLastPoseDay ?? true,
+      } };
+      const displacedIds = new Set(result.displaced.map(c => c.id));
+      const assignments = prevRes.assignments
+        .filter(a => a.id !== updated.id && !displacedIds.has(a.id))
+        .concat([{ id: updated.id, iso, order: 0 }]);
+      return { ...prev, [binId]: { ...prevRes, dayPlans, assignments } };
+    });
     setDropProposal(null);
   };
 
@@ -4236,68 +4349,85 @@ ${sign}`,
             <div className="text-sm mb-4" style={{ color: 'var(--ink-soft)' }}>
               {dropProposal.bin.name} · {new Date(dropProposal.iso + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })} · {dropProposal.chantierObj.postalCode} {dropProposal.chantierObj.city} · {dropProposal.chantierObj.estimatedDuration}h
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
-              {[['Avant', dropProposal.currentPlan?.dayPlans, 'var(--ink-soft)'], ['Après', dropProposal.proposedResult?.dayPlans, 'var(--teal-deep)']].map(([label, dayPlans, color]) => {
-                const plan = dayPlans?.[dropProposal.iso];
-                const poses = plan ? (plan.events || []).filter(e => e.type === 'pose') : [];
-                return (
-                  <div key={label}>
-                    <div className="text-xs font-semibold mb-2" style={{ color, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</div>
-                    {!plan ? <div style={{ color: 'var(--ink-faint)', fontSize: 13 }}>Journée vide</div> : (
-                      <div className="space-y-1">
-                        {poses.map((e, i) => (
-                          <div key={i} className="flex items-center gap-2 p-2 rounded" style={{ background: 'var(--cream)', fontSize: 12 }}>
-                            <span style={{ fontFamily: 'monospace', color: 'var(--ink-soft)', minWidth: 40 }}>{minToHHMM(e.start)}</span>
-                            <span style={{ fontWeight: 600 }}>{e.chantier?.clientName || '—'}</span>
-                            <span style={{ color: 'var(--ink-faint)', marginLeft: 'auto' }}>{e.chantier?.city} · {e.chantier?.estimatedDuration}h</span>
-                          </div>
-                        ))}
-                        {poses.length === 0 && <div style={{ color: 'var(--ink-faint)', fontSize: 12 }}>Aucune pose</div>}
-                        <div style={{ fontSize: 11, color: 'var(--ink-faint)', marginTop: 4 }}>
-                          fin {minToHHMM(plan.endMin)} · {fmtDuration((plan.approachSec || 0) + (plan.totalDriveSec || 0) + (plan.siegeReturnSec || 0))} route
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            {dropProposal.displaced.length === 0 ? (
-              <div className="flex gap-3 justify-end">
-                <button className="btn-secondary" onClick={() => setDropProposal(null)}>Annuler</button>
-                <button className="btn-primary" onClick={confirmDropProposal}>Confirmer</button>
-              </div>
-            ) : dropConfirmStep === 1 ? (
+            {!dropProposal.result?.ok ? (
               <>
                 <div className="text-xs p-3 rounded mb-4 flex items-start gap-2" style={{ background: 'var(--danger-bg, #FBE4DC)', color: 'var(--danger, #C0392B)' }}>
                   <I.alert size={14} style={{ marginTop: 1, flexShrink: 0 }} />
-                  <span><strong>{dropProposal.displaced.length} chantier{dropProposal.displaced.length > 1 ? 's' : ''} déjà placé{dropProposal.displaced.length > 1 ? 's' : ''}</strong> {dropProposal.displaced.length > 1 ? 'seraient déprogrammés' : 'serait déprogrammé'} pour faire de la place. Rien n'est fait tant que tu n'as pas vu la liste et confirmé.</span>
+                  <span>
+                    {dropProposal.result?.error === 'geocode'
+                      ? "Adresse introuvable — impossible de calculer la tournée de ce jour."
+                      : "Ce chantier ne rentre pas ce jour-là, même en libérant de la place. Essaie un autre jour, ou repasse par la fiche du chantier."}
+                  </span>
                 </div>
                 <div className="flex gap-3 justify-end">
-                  <button className="btn-secondary" onClick={() => setDropProposal(null)}>Annuler</button>
-                  <button className="btn-primary" onClick={() => setDropConfirmStep(2)}>Voir ce qui serait déprogrammé →</button>
+                  <button className="btn-secondary" onClick={() => setDropProposal(null)}>Fermer</button>
                 </div>
               </>
             ) : (
               <>
-                <div className="text-xs p-3 rounded mb-4" style={{ background: 'var(--danger-bg, #FBE4DC)', color: 'var(--danger, #C0392B)' }}>
-                  <div className="flex items-start gap-2 mb-2">
-                    <I.alert size={14} style={{ marginTop: 1, flexShrink: 0 }} />
-                    <strong>Ces chantiers seront remis « à planifier » (date et binôme effacés) :</strong>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
+                  {[['Avant', dropProposal.currentPlan, 'var(--ink-soft)'], ['Après', dropProposal.result, 'var(--teal-deep)']].map(([label, plan, color]) => {
+                    const poses = plan ? (plan.events || []).filter(e => e.type === 'pose') : [];
+                    return (
+                      <div key={label}>
+                        <div className="text-xs font-semibold mb-2" style={{ color, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</div>
+                        {!plan ? <div style={{ color: 'var(--ink-faint)', fontSize: 13 }}>Journée vide</div> : (
+                          <div className="space-y-1">
+                            {poses.map((e, i) => (
+                              <div key={i} className="flex items-center gap-2 p-2 rounded" style={{ background: 'var(--cream)', fontSize: 12 }}>
+                                <span style={{ fontFamily: 'monospace', color: 'var(--ink-soft)', minWidth: 40 }}>{minToHHMM(e.start)}</span>
+                                <span style={{ fontWeight: 600 }}>{e.chantier?.clientName || '—'}</span>
+                                <span style={{ color: 'var(--ink-faint)', marginLeft: 'auto' }}>{e.chantier?.city} · {e.chantier?.estimatedDuration}h</span>
+                              </div>
+                            ))}
+                            {poses.length === 0 && <div style={{ color: 'var(--ink-faint)', fontSize: 12 }}>Aucune pose</div>}
+                            <div style={{ fontSize: 11, color: 'var(--ink-faint)', marginTop: 4 }}>
+                              fin {minToHHMM(plan.endMin)} · {fmtDuration((plan.approachSec || 0) + (plan.totalDriveSec || 0) + (plan.siegeReturnSec || 0))} route
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                {dropProposal.result.displaced.length === 0 ? (
+                  <div className="flex gap-3 justify-end">
+                    <button className="btn-secondary" onClick={() => setDropProposal(null)}>Annuler</button>
+                    <button className="btn-primary" onClick={confirmDropProposal}>Confirmer</button>
                   </div>
-                  <ul style={{ marginLeft: 22, listStyle: 'disc' }}>
-                    {dropProposal.displaced.map(c => (
-                      <li key={c.id}>{c.clientName} — {c.city} · {c.estimatedDuration}h</li>
-                    ))}
-                  </ul>
-                </div>
-                <div className="flex gap-3 justify-end">
-                  <button className="btn-secondary" onClick={() => setDropProposal(null)}>Annuler</button>
-                  <button className="btn-secondary" onClick={() => setDropConfirmStep(1)}>← Retour</button>
-                  <button className="btn-primary" style={{ background: 'var(--danger, #C0392B)' }} onClick={confirmDropProposal}>
-                    Confirmer et déprogrammer {dropProposal.displaced.length} chantier{dropProposal.displaced.length > 1 ? 's' : ''}
-                  </button>
-                </div>
+                ) : dropConfirmStep === 1 ? (
+                  <>
+                    <div className="text-xs p-3 rounded mb-4 flex items-start gap-2" style={{ background: 'var(--danger-bg, #FBE4DC)', color: 'var(--danger, #C0392B)' }}>
+                      <I.alert size={14} style={{ marginTop: 1, flexShrink: 0 }} />
+                      <span><strong>{dropProposal.result.displaced.length} chantier{dropProposal.result.displaced.length > 1 ? 's' : ''} déjà placé{dropProposal.result.displaced.length > 1 ? 's' : ''} ce jour-là</strong> {dropProposal.result.displaced.length > 1 ? 'seraient déprogrammés' : 'serait déprogrammé'} pour faire de la place. Le reste de la semaine n'est pas touché. Rien n'est fait tant que tu n'as pas vu la liste et confirmé.</span>
+                    </div>
+                    <div className="flex gap-3 justify-end">
+                      <button className="btn-secondary" onClick={() => setDropProposal(null)}>Annuler</button>
+                      <button className="btn-primary" onClick={() => setDropConfirmStep(2)}>Voir ce qui serait déprogrammé →</button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="text-xs p-3 rounded mb-4" style={{ background: 'var(--danger-bg, #FBE4DC)', color: 'var(--danger, #C0392B)' }}>
+                      <div className="flex items-start gap-2 mb-2">
+                        <I.alert size={14} style={{ marginTop: 1, flexShrink: 0 }} />
+                        <strong>Ces chantiers seront remis « à planifier » (date et binôme effacés) :</strong>
+                      </div>
+                      <ul style={{ marginLeft: 22, listStyle: 'disc' }}>
+                        {dropProposal.result.displaced.map(c => (
+                          <li key={c.id}>{c.clientName} — {c.city} · {c.estimatedDuration}h</li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div className="flex gap-3 justify-end">
+                      <button className="btn-secondary" onClick={() => setDropProposal(null)}>Annuler</button>
+                      <button className="btn-secondary" onClick={() => setDropConfirmStep(1)}>← Retour</button>
+                      <button className="btn-primary" style={{ background: 'var(--danger, #C0392B)' }} onClick={confirmDropProposal}>
+                        Confirmer et déprogrammer {dropProposal.result.displaced.length} chantier{dropProposal.result.displaced.length > 1 ? 's' : ''}
+                      </button>
+                    </div>
+                  </>
+                )}
               </>
             )}
           </div>
