@@ -1221,8 +1221,12 @@ async function planSingleDay(existingChantiers, newChantier, depot, workday, day
     const events = [];
     let aSec;
     if (seq[0] === newIdx) {
-      if (!approachFromDepot) return null; // approche "nuit précédente" : pas de point de référence connu
-      aSec = legFromDepot(newIdx);
+      // Si le jour était vide (m===0), le nouveau chantier est de toute façon le 1er : l'approche
+      // connue (dépôt ou fixe) s'applique normalement. Si le jour avait déjà des chantiers et que le
+      // nouveau se glisse AVANT eux, on invalide l'approche fixe "nuit précédente" (calculée pour
+      // l'ancien 1er stop) faute de point de référence connu pour le nouveau — on rejette la position.
+      if (m > 0 && !approachFromDepot) return null;
+      aSec = approachFromDepot ? legFromDepot(newIdx) : fixedApproachSec;
     } else {
       aSec = approachFromDepot ? legFromDepot(seq[0]) : fixedApproachSec;
     }
@@ -1274,6 +1278,26 @@ async function planSingleDay(existingChantiers, newChantier, depot, workday, day
     if (res.ok) return { ...res, displaced: [toRemove, ...res.displaced] };
   }
   return { error: 'no_fit' };
+}
+
+/* Construit le plan d'UNE journée à partir de RIEN pour une liste de chantiers (typiquement un
+   jour de chantiers déjà VALIDÉS), en réutilisant planSingleDay par insertions successives (chaque
+   chantier s'insère au meilleur endroit parmi ceux déjà posés ce jour-là, temps de trajet réels).
+   Sert à donner aux jours verrouillés le MÊME traitement d'approche (dépôt vs enchaînement depuis la
+   veille) que les jours flottants — voir dayMeta.approachFromDepot/approachSec.
+   Ne doit jamais déprogrammer un chantier validé : si l'insertion déborderait, renvoie { error:'no_fit' }
+   plutôt que d'écarter un chantier verrouillé en silence. */
+async function planFixedDay(chantiersList, depot, workday, dayMeta = {}) {
+  if (!chantiersList.length) return { ok: true, events: [], endMin: null, totalDriveSec: 0, siegeReturnSec: 0, staysOnSite: false, displaced: [] };
+  let acc = [];
+  let result = null;
+  for (const ch of chantiersList) {
+    result = await planSingleDay(acc, ch, depot, workday, dayMeta);
+    if (!result.ok) return result;
+    if (result.displaced.length) return { error: 'no_fit' };
+    acc = [...acc, ch];
+  }
+  return result;
 }
 
 /* =========================================================================
@@ -3382,7 +3406,10 @@ ${sign}`,
           // NB : volontairement, les chantiers validés ne sont PAS ajoutés à `assignments` — ce tableau
           // sert de pool source au drag&drop (dropOnDay) et à « Appliquer » ; les y mêler les exposerait
           // à être replanifiés par erreur lors d'un déplacement d'un AUTRE chantier.
-          for (const [iso, group] of Object.entries(byDay)) {
+          // Traiter les jours dans l'ordre calendaire : un jour validé peut servir d'ancre (« veille »)
+          // au jour validé suivant, il faut donc que mergedDayPlans[prevISO] soit déjà posé.
+          const sortedDays = Object.entries(byDay).sort((a, z) => a[0].localeCompare(z[0]));
+          for (const [iso, group] of sortedDays) {
             const key = b.id + '_' + iso;
             const currentIds = group.map(c => c.id).sort().join(',');
             const cached = store[key];
@@ -3394,11 +3421,48 @@ ${sign}`,
             // on calcule une fois, puis on fige — les validations futures sur d'AUTRES jours ne
             // toucheront jamais ce résultat.
             try {
-              const lockedPlan = await planWeek(group, depot, workday, days, [iso], closures);
-              if (lockedPlan.dayPlans[iso]) {
-                mergedDayPlans[iso] = lockedPlan.dayPlans[iso];
-                store[key] = { chantierIds: currentIds, dayPlan: lockedPlan.dayPlans[iso] };
+              // Le jour validé doit suivre la MÊME règle de trajet qu'un jour flottant : partir du
+              // dernier chantier de la veille si c'est plus proche que le dépôt, pas bêtement du dépôt
+              // à chaque fois (sinon un chantier validé loin du siège mais à 13 min du chantier de la
+              // veille se voit un trajet fantôme de plusieurs heures, au point de ne plus rentrer dans
+              // la journée et de disparaître silencieusement en overflow).
+              const prevISO = toISO(addDays(parseISO(iso), -1));
+              const prevPlan = mergedDayPlans[prevISO] || merged[b.id]?.dayPlans?.[prevISO];
+              const prevLastChantier = prevPlan ? [...(prevPlan.events || [])].reverse().find(e => e.type === 'pose')?.chantier : null;
+              let dayMeta = { approachFromDepot: true, approachSec: 0, isLastPoseDay: true, staysOnSite: false };
+              if (prevLastChantier && group[0]) {
+                try {
+                  const [pg, fg] = await Promise.all([
+                    geocodeFr(prevLastChantier.address, prevLastChantier.postalCode, prevLastChantier.city),
+                    geocodeFr(group[0].address, group[0].postalCode, group[0].city),
+                  ]);
+                  if (pg && fg) {
+                    const linkDm = await durationMatrix([pg, fg]);
+                    const linkSec = linkDm.matrix?.[0]?.[1];
+                    let depotSec = null;
+                    if (depot && (depot.address || depot.city || depot.postalCode)) {
+                      const dp = await geocodeFr(depot.address, depot.postalCode, depot.city);
+                      if (dp) { const depotDm = await durationMatrix([dp, fg]); depotSec = depotDm.matrix?.[0]?.[1]; }
+                    }
+                    if (typeof linkSec === 'number' && (depotSec == null || linkSec < depotSec)) {
+                      dayMeta = { approachFromDepot: false, approachSec: linkSec, isLastPoseDay: true, staysOnSite: false };
+                    }
+                  }
+                } catch (e) { /* échec du géocodage d'ancrage → repli sur l'approche dépôt par défaut */ }
+              }
+              const built = await planFixedDay(group, depot, workday, dayMeta);
+              if (built.ok) {
+                const dayPlan = {
+                  events: built.events, endMin: built.endMin, totalDriveSec: built.totalDriveSec,
+                  approachSec: dayMeta.approachSec, eveningSec: 0, eveningReturn: false,
+                  source: 'osrm', oversized: false, siegeReturnSec: built.siegeReturnSec,
+                  staysOnSite: built.staysOnSite, isLastPoseDay: true,
+                };
+                mergedDayPlans[iso] = dayPlan;
+                store[key] = { chantierIds: currentIds, dayPlan };
                 storeChanged = true;
+              } else if (cached) {
+                mergedDayPlans[iso] = cached.dayPlan;
               }
             } catch (e) {
               console.error('[mergeWithLocked] échec calcul jour validé', e);
