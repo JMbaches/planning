@@ -642,8 +642,18 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
   const late     = poolInput.filter(c => !windowTooEarly(c, poseListEarly) && windowMissesWeek(c, poseListEarly));
   const inWindow = poolInput.filter(c => !windowTooEarly(c, poseListEarly) && !windowMissesWeek(c, poseListEarly));
   // Les chantiers en retard entrent dans le pool en dernier (priorité basse) avec flag _softWindow
-  const pool = [...inWindow, ...late.map(c => ({ ...c, _softWindow: true }))];
+  const poolCandidates = [...inWindow, ...late.map(c => ({ ...c, _softWindow: true }))];
   const outOfWindow = tooEarly; // seuls les "trop tôt" sont vraiment hors fenêtre
+
+  // Filtrage géocodage : un chantier dont l'adresse est introuvable est retiré du pool ICI, AVANT le
+  // calcul de tournée — sinon un SEUL échec de géocodage faisait basculer TOUT LE LOT (même les
+  // chantiers bien renseignés) sur une estimation de trajet à plat (20 min pour chaque liaison),
+  // faussant tout le planning du binôme (ex : un retour au dépôt qui semble à 20 min alors qu'il
+  // est en réalité à 3h de route — le chantier en cause n'était même pas celui mal géolocalisé).
+  const geoResults = await Promise.all(poolCandidates.map(c => geocodeFr(c.address, c.postalCode, c.city).catch(() => null)));
+  const geoFailedChantiers = poolCandidates.filter((_, i) => !geoResults[i]);
+  const pool = poolCandidates.filter((_, i) => !!geoResults[i]);
+  const poolGeoPts = geoResults.filter(Boolean); // même ordre que `pool`
 
   const dayStart   = parseHHMM(workday?.start, 480);
   const DAY_END    = 18 * 60;   // plafond journée : 18h00
@@ -658,10 +668,10 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
   let depotGeo = null; // {lat, lon} du dépôt
   try {
     if (!pool.length) throw new Error('vide');
-    const pts = [];
-    for (let ci = 0; ci < pool.length; ci++) { const c = pool[ci]; const p = await geocodeFr(c.address, c.postalCode, c.city); if (!p) throw new Error('geo'); pts.push(p); geoByIdx[ci] = { lat: p.lat, lon: p.lon }; }
-    let points = pts;
-    if (hasDepot) { const dp = await geocodeFr(depot.address, depot.postalCode, depot.city); if (!dp) throw new Error('depot'); depotGeo = { lat: dp.lat, lon: dp.lon }; points = [dp, ...pts]; }
+    // Déjà géocodés au filtrage ci-dessus (poolGeoPts) — pas besoin de refaire les appels ici.
+    pool.forEach((_, ci) => { geoByIdx[ci] = { lat: poolGeoPts[ci].lat, lon: poolGeoPts[ci].lon }; });
+    let points = poolGeoPts;
+    if (hasDepot) { const dp = await geocodeFr(depot.address, depot.postalCode, depot.city); if (!dp) throw new Error('depot'); depotGeo = { lat: dp.lat, lon: dp.lon }; points = [dp, ...poolGeoPts]; }
     const dm = await durationMatrix(points); matrix = dm.matrix; source = dm.source;
     const opt = optimizeOrder(matrix, { start: 0, returnToStart: false });
     order = opt.order.filter(i => !(hasDepot && i === 0)).map(i => hasDepot ? i - 1 : i);
@@ -1053,7 +1063,11 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
       const prochainChantierSec = chunks[di + 1]?.stops?.length
         ? legBetween(chunk.stops[chunk.stops.length - 1], chunks[di + 1].stops[0])
         : Infinity; // pas de chantier le lendemain = dernier jour de pose
-      const depotProche = hasDepot && returnSiege > 0 && returnSiege < SIEGE_SEUIL_SEC;
+      // matrix === null : routage entièrement indisponible (ex: dépôt non géolocalisable) → legToDepot
+      // retombe sur une durée par défaut identique pour tous (20 min), qui ferait croire à tort que
+      // le dépôt est toujours proche. Dans ce cas on ne décide JAMAIS de rentrer sur cette seule base
+      // — mieux vaut une nuit sur place non nécessaire qu'un retour illusoire à 3h de route.
+      const depotProche = matrix !== null && hasDepot && returnSiege > 0 && returnSiege < SIEGE_SEUIL_SEC;
       const prochainLoin = prochainChantierSec > NEXT_CHANTIER_SEUIL_SEC;
       // Veille de jour fermé : vérifier le jour calendaire suivant
       const todayDate = new Date(iso + 'T12:00:00');
@@ -1129,6 +1143,8 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
   // Chantiers écartés car leur fenêtre est dans le futur (trop tôt) → à reporter.
   // Les chantiers en retard (_softWindow) ont été tentés dans le pool — s'ils n'ont pas été casés, ils sont dans overflow.
   outOfWindow.forEach(c => overflow.push(c));
+  // Adresse introuvable : jamais perdu, visible en overflow pour que l'adresse soit corrigée.
+  geoFailedChantiers.forEach(c => overflow.push(c));
 
   return { dayPlans, assignments, overflow, source, count: pool.length, depotGeo, outOfWindow };
 }
