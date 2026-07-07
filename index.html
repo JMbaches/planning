@@ -1284,19 +1284,48 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
     if (aLate !== bLate) return aLate - bLate;
     return (valid[b].estimatedDuration || 0) - (valid[a].estimatedDuration || 0);
   });
+  // Clustering géographique GLOUTON des proches : sans lui, « proche du dépôt » ne veut rien dire
+  // (le rayon des 250km couvre des régions entières) — deux chantiers tous les deux « proches »
+  // mais à 300km l'un de l'autre pouvaient finir sur la même équipe la même semaine, juste parce que
+  // l'équilibrage de charge n'a aucune notion de distance MUTUELLE. Principe : chaque chantier
+  // rejoint l'équipe dont le centre courant (barycentre des proches déjà affectés cette passe, ou
+  // d'un verrouillé/validé déjà placé) est le plus proche, TANT QU'elle a la capacité et que ce
+  // centre est à moins de PROCHE_CLUSTER_KM — sinon on démarre une nouvelle zone chez l'équipe la
+  // moins chargée localement, exactement comme le fait déjà planWeek au niveau des journées.
+  const PROCHE_CLUSTER_KM = 80;
+  const procheCentroid = new Array(k).fill(null); // { lat, lon, n } par binôme
+  const addToCentroid = (bi, g) => {
+    if (!g) return;
+    if (!procheCentroid[bi]) procheCentroid[bi] = { lat: g.lat, lon: g.lon, n: 1 };
+    else { const c = procheCentroid[bi]; c.lat = (c.lat * c.n + g.lat) / (c.n + 1); c.lon = (c.lon * c.n + g.lon) / (c.n + 1); c.n++; }
+  };
+  // Amorce les centres avec les chantiers déjà verrouillés (heure fixe / date manuelle) de chaque
+  // équipe — leur emplacement compte dès le départ, pas seulement celui des validés.
+  valid.forEach((c, i) => { if (fixedForced.has(i)) addToCentroid(assign[i], pts[i]); });
+
   proche.forEach(i => {
-    // Ancrage sur un chantier déjà validé : si une équipe a un validé proche cette semaine ET qu'il
-    // lui reste assez de capacité pour ce chantier, on l'y met — pour construire une tournée cohérente
-    // autour du point déjà fixé plutôt que de zigzaguer. Sinon (pas d'ancre proche, ou équipe pleine),
-    // on retombe sur l'équilibrage de charge classique.
+    // Ancrage sur un chantier déjà validé : priorité absolue si l'équipe a la capacité — c'est un
+    // engagement client, pas juste une préférence géographique.
     const anchored = nearestValidatedBinIdx(pts[i]);
-    let best;
+    let best = -1;
     if (anchored >= 0 && localCapacityLeft(anchored) >= (valid[i].estimatedDuration || 0)) {
       best = anchored;
     } else {
-      best = 0; for (let b = 1; b < k; b++) if (localCapacityLeft(b) > localCapacityLeft(best)) best = b;
+      let bestDist = Infinity;
+      for (let b = 0; b < k; b++) {
+        if (localCapacityLeft(b) < (valid[i].estimatedDuration || 0)) continue;
+        const c = procheCentroid[b];
+        const d = c ? haversineKm(pts[i], c) : Infinity; // équipe sans zone locale encore = pas favorisée ici
+        if (d < bestDist) { bestDist = d; best = b; }
+      }
+      // Aucune équipe avec une zone locale proche (< PROCHE_CLUSTER_KM) et de la capacité : on
+      // démarre une nouvelle zone chez l'équipe qui a le plus de capacité restante.
+      if (best < 0 || bestDist > PROCHE_CLUSTER_KM) {
+        best = 0; for (let b = 1; b < k; b++) if (localCapacityLeft(b) > localCapacityLeft(best)) best = b;
+      }
     }
     assign[i] = best; loadByBin[best] += (valid[i].estimatedDuration || 0);
+    addToCentroid(best, pts[i]);
   });
 
   const byBin = {}, pools = {};
