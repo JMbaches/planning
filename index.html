@@ -1190,7 +1190,9 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
     // jours réellement posables pour ce binôme = candidats non bloqués par une indisponibilité
     const locked = (lockedDaysByBin && lockedDaysByBin[binomes[ci].id]) || new Set();
     const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, binomes[ci].id, iso) && !locked.has(iso));
-    if (pool.length) byBin[binomes[ci].id] = await planWeek(pool, depot, workday, days, poseDaysISO, false, closures);
+    // pinByDate=true : un chantier ayant déjà une date choisie à la main (manuellement, dans sa fiche)
+    // doit être posé CE jour-là, même en répartition automatique par zone géo — pas juste "quelque part".
+    if (pool.length) byBin[binomes[ci].id] = await planWeek(pool, depot, workday, days, poseDaysISO, true, closures);
   }
   const ungeocoded = allChantiers.filter(c => !valid.includes(c));
   return { byBin, pools, ungeocoded };
@@ -3090,40 +3092,45 @@ ${sign}`,
     const weekISO = days.slice(0, 4).map(d => toISO(d));
     // Fermetures = jours indisponibles pour tous les binômes (scope 'all')
     const closures = (sGet(SK.settings, {}).unavail || []).filter(u => u.scope === 'all').map(u => u.from).filter(Boolean);
-    const lockedDaysByBin = {};
+    const lockedDaysByBin = {}; const validatedByBin = {};
     binomes.forEach(b => {
-      lockedDaysByBin[b.id] = new Set(
-        chantiers.filter(c => c.status === 'valide' && c.scheduledBinome === b.id && weekISO.includes(c.scheduledDate))
-                 .map(c => c.scheduledDate)
-      );
+      const validated = chantiers.filter(c => c.status === 'valide' && c.scheduledBinome === b.id && weekISO.includes(c.scheduledDate));
+      validatedByBin[b.id] = validated;
+      lockedDaysByBin[b.id] = new Set(validated.map(c => c.scheduledDate));
     });
     try {
-      // Fusionne le nouveau calcul avec les dayPlans des jours verrouillés (chantiers validés).
-      // Les jours verrouillés gardent leurs données existantes depuis schedules courant.
-      const mergeWithLocked = (newByBin) => {
+      // Fusionne le nouveau calcul avec le plan des jours verrouillés (chantiers validés).
+      // Recalculé à chaque fois DEPUIS LES CHANTIERS eux-mêmes (via planWeek, épinglé à leur date) —
+      // jamais depuis l'état React `schedules`, qui peut être vide (ex. juste après
+      // "Supprimer tous les plannings") et ferait disparaître le jour validé du planning.
+      const mergeWithLocked = async (newByBin) => {
         const merged = { ...newByBin };
-        binomes.forEach(b => {
-          const locked = lockedDaysByBin[b.id];
-          if (!locked || !locked.size) return;
-          const existing = schedules[b.id]; // schedule actuel avant recalcul
-          if (!existing) return;
+        for (const b of binomes) {
+          const validated = validatedByBin[b.id];
+          if (!validated.length) continue;
+          const validatedDaysISO = [...new Set(validated.map(c => c.scheduledDate))].sort();
+          let lockedPlan;
+          try {
+            lockedPlan = await planWeek(validated, depot, workday, days, validatedDaysISO, true, closures);
+          } catch (e) {
+            console.error('[mergeWithLocked] échec recalcul jour validé', e);
+            continue;
+          }
           const mergedDayPlans = { ...(merged[b.id]?.dayPlans || {}) };
-          locked.forEach(iso => {
-            if (existing.dayPlans && existing.dayPlans[iso]) {
-              mergedDayPlans[iso] = existing.dayPlans[iso]; // conserver le jour verrouillé tel quel
-            }
+          validatedDaysISO.forEach(iso => {
+            if (lockedPlan.dayPlans[iso]) mergedDayPlans[iso] = lockedPlan.dayPlans[iso];
           });
           merged[b.id] = merged[b.id]
             ? { ...merged[b.id], dayPlans: mergedDayPlans }
-            : { ...existing, dayPlans: mergedDayPlans };
-        });
+            : { ...lockedPlan, dayPlans: mergedDayPlans };
+        }
         return merged;
       };
 
       if (mode === 'auto') {
         setProgress('zones géographiques');
         const { byBin, pools, ungeocoded } = await autoAssignAndPlan(pool, binomes, depot, workday, days, unavail, lockedDaysByBin, closures);
-        setSchedules(mergeWithLocked(byBin));
+        setSchedules(await mergeWithLocked(byBin));
         setUsedPools(binomes.map(b => ({ bin: b, pool: pools[b.id] || [] })));
         setUngeocoded(ungeocoded);
       } else {
@@ -3135,7 +3142,7 @@ ${sign}`,
           const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, bin.id, iso) && !lockedDaysByBin[bin.id].has(iso));
           next[bin.id] = await planWeek(bp, depot, workday, days, poseDaysISO, true, closures);
         }
-        setSchedules(mergeWithLocked(next));
+        setSchedules(await mergeWithLocked(next));
         setUsedPools(mPools);
       }
     } catch (e) {
