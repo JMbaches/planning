@@ -763,8 +763,10 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, pinByDate 
       const keepS = [], keepL = [];
       for (let k = 0; k < ch.stops.length; k++) {
         const c = pool[ch.stops[k]];
-        // Épingler à la date : chantier à heure fixe OU (mode manuel) chantier avec date assignée manuellement
-        const isPinned = c.scheduledDate && dayIndexOf(c.scheduledDate) >= 0 && (c.fixedTime || pinByDate);
+        // Épingler à la date : chantier à heure fixe, chantier dont la date a été fixée EXPRESSÉMENT
+        // par l'utilisateur (QuickModal / fiche chantier — c.manualDate), OU en mode manuel toute date déjà
+        // assignée (le binôme est déjà décidé, on ne fait que séquencer les jours autour).
+        const isPinned = c.scheduledDate && dayIndexOf(c.scheduledDate) >= 0 && (c.fixedTime || c.manualDate || pinByDate);
         if (isPinned) {
           fixedEntries.push({ idx: ch.stops[k] });
         } else { keepS.push(ch.stops[k]); keepL.push(ch.legs[k]); }
@@ -1116,11 +1118,12 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
   const assign = new Array(valid.length).fill(0);
   const loadByBin = new Array(k).fill(0); // charge (heures) attribuée à chaque binôme
 
-  // CHANTIERS À HEURE FIXE (urgences placées à la main) : on RESPECTE le binôme choisi et on ne les
-  // réaffecte pas. On note leur index pour les exclure de la répartition géographique automatique.
+  // CHANTIERS À HEURE FIXE (urgences) OU DONT LA DATE A ÉTÉ FIXÉE EXPRESSÉMENT PAR L'UTILISATEUR
+  // (c.manualDate, via QuickModal ou la fiche chantier) : on RESPECTE le binôme choisi et on ne les
+  // réaffecte pas géographiquement. On note leur index pour les exclure de la répartition automatique.
   const fixedForced = new Set();
   valid.forEach((c, i) => {
-    if (c.fixedTime && c.scheduledBinome) {
+    if ((c.fixedTime || c.manualDate) && c.scheduledBinome) {
       const bi = binomes.findIndex(b => b.id === c.scheduledBinome);
       if (bi >= 0) { assign[i] = bi; loadByBin[bi] += (c.estimatedDuration || 0); fixedForced.add(i); }
     }
@@ -1190,9 +1193,12 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
     // jours réellement posables pour ce binôme = candidats non bloqués par une indisponibilité
     const locked = (lockedDaysByBin && lockedDaysByBin[binomes[ci].id]) || new Set();
     const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, binomes[ci].id, iso) && !locked.has(iso));
-    // pinByDate=true : un chantier ayant déjà une date choisie à la main (manuellement, dans sa fiche)
-    // doit être posé CE jour-là, même en répartition automatique par zone géo — pas juste "quelque part".
-    if (pool.length) byBin[binomes[ci].id] = await planWeek(pool, depot, workday, days, poseDaysISO, true, closures);
+    // pinByDate=false : en répartition automatique par zone géo, on laisse l'algo reclasser librement
+    // les chantiers qui n'ont qu'une date "héritée" d'un calcul précédent (sinon plus aucune
+    // réoptimisation n'a de sens : tout reste figé sur son ancien jour dès qu'un plan a été appliqué
+    // une fois). Les chantiers dont la date a été fixée EXPRESSÉMENT par l'utilisateur (c.manualDate)
+    // restent épinglés quoi qu'il arrive — planWeek le vérifie indépendamment de ce paramètre.
+    if (pool.length) byBin[binomes[ci].id] = await planWeek(pool, depot, workday, days, poseDaysISO, false, closures);
   }
   const ungeocoded = allChantiers.filter(c => !valid.includes(c));
   return { byBin, pools, ungeocoded };
@@ -1955,14 +1961,22 @@ function ChantierForm({ existing, binomes, poseTypes, apiKey, onSave, onCancel, 
           <div className="label-cap mb-4">Planification</div>
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Date prévue"><input type="date" value={data.scheduledDate} onChange={e => set('scheduledDate', e.target.value)} /></Field>
+              {/* Toucher la date ou le binôme ICI = choix manuel explicite : marqué manualDate pour
+                  qu'aucune réoptimisation future ne le déplace (voir planWeek : c.manualDate). Une
+                  date simplement héritée d'un calcul précédent (jamais rééditée ici) reste libre. */}
+              <Field label="Date prévue"><input type="date" value={data.scheduledDate} onChange={e => setData(d => ({ ...d, scheduledDate: e.target.value, manualDate: true }))} /></Field>
               <Field label="Binôme">
-                <select value={data.scheduledBinome} onChange={e => set('scheduledBinome', e.target.value)}>
+                <select value={data.scheduledBinome} onChange={e => setData(d => ({ ...d, scheduledBinome: e.target.value, manualDate: true }))}>
                   <option value="">—</option>
                   {binomes.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                 </select>
               </Field>
             </div>
+            {data.manualDate && data.scheduledDate && data.scheduledBinome && (
+              <div className="text-xs p-2 rounded flex items-center gap-1" style={{ background: 'var(--cream)', color: 'var(--accent)' }}>
+                <I.lock size={12} /> Date fixée manuellement : elle ne sera jamais déplacée par une réoptimisation.
+              </div>
+            )}
             <Field label="Heure imposée par le client (optionnel)">
               <input type="time" value={data.fixedTime} step="900" disabled={!data.scheduledDate}
                 onChange={e => set('fixedTime', e.target.value)} />
@@ -2037,7 +2051,9 @@ function QuickModal({ chantier, binomes, onClose, onSave }) {
     const finalBinId = newStatus === 'en_attente' ? '' : binId;
     const finalFixedTime = newStatus === 'en_attente' ? '' : fixedTime;
     if (finalDate && finalBinId && newStatus === 'a_planifier') newStatus = 'planifie';
-    onSave({ ...chantier, scheduledDate: finalDate, scheduledBinome: finalBinId, fixedTime: finalFixedTime || '', status: newStatus });
+    // Cette modale sert précisément à FIXER une date+binôme à la main : on marque le choix comme
+    // manuel pour qu'aucune réoptimisation future ne le déplace (voir planWeek : c.manualDate).
+    onSave({ ...chantier, scheduledDate: finalDate, scheduledBinome: finalBinId, fixedTime: finalFixedTime || '', status: newStatus, manualDate: !!(finalDate && finalBinId) });
   };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6 no-print" style={{ background: 'rgba(26,26,26,0.5)' }}>
