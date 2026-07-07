@@ -630,7 +630,10 @@ function injectLunch(events, lunchStart, lunchDur) {
 // Le verrouillage jour+binôme suit UNE seule règle, appliquée partout de la même façon :
 // voir isLockedChantier. Plus de paramètre pinByDate — un chantier verrouillé est toujours
 // épinglé à son jour, un chantier libre est toujours recalculé, quel que soit le mode/appelant.
-async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures = []) {
+// validatedAnchors (optionnel) : [{date:'YYYY-MM-DD', lat, lon}] — chantiers déjà validés cette
+// semaine pour ce binôme (jamais dans poolInput, gérés à part). Sert UNIQUEMENT à orienter le
+// premier chantier d'un jour VOISIN d'un jour validé vers ce qui est géographiquement cohérent.
+async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures = [], validatedAnchors = []) {
   // Séparer le pool selon la fenêtre :
   // - trop tôt (notBefore dans le futur) → exclu, contrainte dure
   // - en retard (notAfter dépassé) → ajouté en fin de pool, contrainte souple
@@ -774,13 +777,29 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
     // Cohérence du trajet : les verrouillés d'un même jour suivent l'ordre de tournée global.
     chunks.forEach(ch => ch.stops.sort((a, b) => order.indexOf(a) - order.indexOf(b)));
 
+    // Ancrage sur les jours ADJACENTS à un chantier déjà validé cette semaine (validatedAnchors) :
+    // le premier flottant placé sur un jour encore vide et voisin d'un jour validé est choisi le
+    // plus proche possible de cette ancre — pour construire une tournée cohérente autour du point
+    // déjà fixé plutôt que de zigzaguer sans le savoir.
+    // IMPORTANT : le jour validé est retiré de poseList en amont (lockedDaysByBin) — « voisin » se
+    // calcule donc sur le VRAI jour calendaire (veille/lendemain), pas sur l'index précédent/suivant
+    // dans poseList (qui peut sauter par-dessus le jour validé manquant).
+    const dayAnchorGeo = chunks.map((ch, di) => {
+      if (ch.stops.length) return null; // jour déjà occupé par un verrouillé, pas besoin d'ancre externe
+      const iso = poseList[di];
+      if (!iso) return null;
+      const prevISO = toISO(addDays(parseISO(iso), -1)), nextISO = toISO(addDays(parseISO(iso), 1));
+      const anchor = validatedAnchors.find(a => a.date === prevISO) || validatedAnchors.find(a => a.date === nextISO);
+      return anchor ? { lat: anchor.lat, lon: anchor.lon } : null;
+    });
+
     const remaining = order.filter(idx => !placedIdx.has(idx));
     const tryFit = (ch, idx) => (dayStartTimeFor([...ch.stops, idx], idx) + 30) <= DAY_END;
     for (let di = 0; di < chunks.length; di++) {
       const iso = poseList[di];
       const ch = chunks[di];
       while (remaining.length) {
-        const lastGeo = ch.stops.length ? geoByIdx[ch.stops[ch.stops.length - 1]] : null;
+        const lastGeo = ch.stops.length ? geoByIdx[ch.stops[ch.stops.length - 1]] : dayAnchorGeo[di];
         // Le candidat qui convient (fenêtre + temps de trajet réel restant), le plus proche du
         // dernier arrêt du jour en cas d'égalité — pour privilégier une tournée cohérente.
         let best = -1, bestDist = Infinity;
@@ -1157,8 +1176,11 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
 
 
 /* Géocode tous les chantiers, les répartit par zone entre les binômes,
-   puis planifie la semaine de chaque zone. */
-async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, unavail, lockedDaysByBin, closures = []) {
+   puis planifie la semaine de chaque zone.
+   validatedByBin (optionnel) : { binomeId: [chantiers validés cette semaine] } — sert d'ancre
+   géographique pour que les chantiers flottants proches d'un déjà-validé rejoignent préférentiellement
+   la même équipe (construire une tournée cohérente autour du point déjà fixé). */
+async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, unavail, lockedDaysByBin, closures = [], validatedByBin = {}) {
   const valid = [], pts = [];
   for (const c of allChantiers) {
     let p = null;
@@ -1166,6 +1188,30 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
     if (p) { valid.push(c); pts.push(p); }
   }
   const k = binomes.length;
+
+  // Ancres géographiques : position + date des chantiers déjà validés cette semaine, par binôme.
+  const VALIDATED_ANCHOR_RADIUS_KM = 40;
+  const validatedAnchors = {}; // binId → [{date, lat, lon}, ...]
+  for (const b of binomes) {
+    const vs = validatedByBin?.[b.id] || [];
+    const anchorPts = [];
+    for (const c of vs) {
+      try { const p = await geocodeFr(c.address, c.postalCode, c.city); if (p) anchorPts.push({ date: c.scheduledDate, lat: p.lat, lon: p.lon }); } catch (e) {}
+    }
+    validatedAnchors[b.id] = anchorPts;
+  }
+  // Pour un chantier géolocalisé au point `pt`, renvoie l'index du binôme dont un chantier validé
+  // est le plus proche (< VALIDATED_ANCHOR_RADIUS_KM), sinon -1 (aucune équipe n'a d'ancre proche).
+  const nearestValidatedBinIdx = (pt) => {
+    let best = -1, bestDist = Infinity;
+    binomes.forEach((b, bi) => {
+      (validatedAnchors[b.id] || []).forEach(p => {
+        const d = haversineKm(pt, p);
+        if (d < bestDist) { bestDist = d; best = bi; }
+      });
+    });
+    return (best >= 0 && bestDist <= VALIDATED_ANCHOR_RADIUS_KM) ? best : -1;
+  };
 
   // Géocode le siège pour mesurer l'éloignement de chaque chantier.
   let depotPt = null;
@@ -1239,8 +1285,17 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
     return (valid[b].estimatedDuration || 0) - (valid[a].estimatedDuration || 0);
   });
   proche.forEach(i => {
-    // binôme avec le PLUS de capacité locale restante (les binômes "lointains" en ont le moins)
-    let best = 0; for (let b = 1; b < k; b++) if (localCapacityLeft(b) > localCapacityLeft(best)) best = b;
+    // Ancrage sur un chantier déjà validé : si une équipe a un validé proche cette semaine ET qu'il
+    // lui reste assez de capacité pour ce chantier, on l'y met — pour construire une tournée cohérente
+    // autour du point déjà fixé plutôt que de zigzaguer. Sinon (pas d'ancre proche, ou équipe pleine),
+    // on retombe sur l'équilibrage de charge classique.
+    const anchored = nearestValidatedBinIdx(pts[i]);
+    let best;
+    if (anchored >= 0 && localCapacityLeft(anchored) >= (valid[i].estimatedDuration || 0)) {
+      best = anchored;
+    } else {
+      best = 0; for (let b = 1; b < k; b++) if (localCapacityLeft(b) > localCapacityLeft(best)) best = b;
+    }
     assign[i] = best; loadByBin[best] += (valid[i].estimatedDuration || 0);
   });
 
@@ -1253,7 +1308,7 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
     // jours réellement posables pour ce binôme = candidats non bloqués par une indisponibilité
     const locked = (lockedDaysByBin && lockedDaysByBin[binomes[ci].id]) || new Set();
     const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, binomes[ci].id, iso) && !locked.has(iso));
-    if (pool.length) byBin[binomes[ci].id] = await planWeek(pool, depot, workday, days, poseDaysISO, closures);
+    if (pool.length) byBin[binomes[ci].id] = await planWeek(pool, depot, workday, days, poseDaysISO, closures, validatedAnchors[binomes[ci].id] || []);
   }
   const ungeocoded = allChantiers.filter(c => !valid.includes(c));
   return { byBin, pools, ungeocoded };
@@ -3223,7 +3278,7 @@ ${sign}`,
 
       if (mode === 'auto') {
         setProgress('zones géographiques');
-        const { byBin, pools, ungeocoded } = await autoAssignAndPlan(pool, binomes, depot, workday, days, unavail, lockedDaysByBin, closures);
+        const { byBin, pools, ungeocoded } = await autoAssignAndPlan(pool, binomes, depot, workday, days, unavail, lockedDaysByBin, closures, validatedByBin);
         setSchedules(await mergeWithLocked(byBin));
         setUsedPools(binomes.map(b => ({ bin: b, pool: pools[b.id] || [] })));
         setUngeocoded(ungeocoded);
@@ -3234,7 +3289,13 @@ ${sign}`,
           if (!bp.length) continue;
           setProgress(bin.name);
           const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, bin.id, iso) && !lockedDaysByBin[bin.id].has(iso));
-          next[bin.id] = await planWeek(bp, depot, workday, days, poseDaysISO, closures);
+          // Ancres géographiques (chantiers déjà validés cette semaine pour ce binôme) : orientent le
+          // premier chantier d'un jour voisin encore vide vers ce qui est géographiquement cohérent.
+          const anchors = [];
+          for (const c of (validatedByBin[bin.id] || [])) {
+            try { const p = await geocodeFr(c.address, c.postalCode, c.city); if (p) anchors.push({ date: c.scheduledDate, lat: p.lat, lon: p.lon }); } catch (e) {}
+          }
+          next[bin.id] = await planWeek(bp, depot, workday, days, poseDaysISO, closures, anchors);
         }
         setSchedules(await mergeWithLocked(next));
         setUsedPools(mPools);
