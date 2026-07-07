@@ -276,6 +276,14 @@ const isUnavailable = (unavail, binId, iso) => {
     return iso >= from && iso <= to; // comparaison lexicographique OK sur ISO YYYY-MM-DD
   });
 };
+// RÈGLE UNIQUE de verrouillage : un chantier dont le jour ET le binôme ne doivent JAMAIS bouger
+// lors d'une réoptimisation. Tout le reste est libre et recalculé depuis zéro à chaque calcul.
+// - valide       : confirmé avec le client (verrouillé depuis la fiche/QuickModal).
+// - fixedTime    : urgence à heure imposée par le client.
+// - manualDate   : date+binôme choisis à la main (QuickModal, ou champs Date/Binôme de la fiche).
+// Un chantier planifié sur une AUTRE semaine n'est pas concerné ici : il est exclu du calcul de
+// cette semaine en amont (voir isFrozenElsewhere), sauf « Tout réoptimiser ».
+const isLockedChantier = (c) => c.status === 'valide' || !!c.fixedTime || !!c.manualDate;
 // Un chantier peut-il être posé à la date iso, vu sa fenêtre client (notBefore / notAfter) ?
 const dateAllowed = (chantier, iso) => {
   if (!iso) return true;
@@ -619,7 +627,10 @@ function injectLunch(events, lunchStart, lunchDur) {
    ça tient avant 18h, sinon le lendemain matin (nuit sur place). Un chantier
    qui ne tient pas en 4 jours part en « à reporter ».
    pool : chantiers du binôme à caser. days : 6 dates Lun→Sam. */
-async function planWeek(poolInput, depot, workday, days, poseDaysISO, pinByDate = false, closures = []) {
+// Le verrouillage jour+binôme suit UNE seule règle, appliquée partout de la même façon :
+// voir isLockedChantier. Plus de paramètre pinByDate — un chantier verrouillé est toujours
+// épinglé à son jour, un chantier libre est toujours recalculé, quel que soit le mode/appelant.
+async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures = []) {
   // Séparer le pool selon la fenêtre :
   // - trop tôt (notBefore dans le futur) → exclu, contrainte dure
   // - en retard (notAfter dépassé) → ajouté en fin de pool, contrainte souple
@@ -763,10 +774,10 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, pinByDate 
       const keepS = [], keepL = [];
       for (let k = 0; k < ch.stops.length; k++) {
         const c = pool[ch.stops[k]];
-        // Épingler à la date : chantier à heure fixe, chantier dont la date a été fixée EXPRESSÉMENT
-        // par l'utilisateur (QuickModal / fiche chantier — c.manualDate), OU en mode manuel toute date déjà
-        // assignée (le binôme est déjà décidé, on ne fait que séquencer les jours autour).
-        const isPinned = c.scheduledDate && dayIndexOf(c.scheduledDate) >= 0 && (c.fixedTime || c.manualDate || pinByDate);
+        // Épingler à la date : RÈGLE UNIQUE isLockedChantier (valide / heure fixe / date manuelle).
+        // Tout le reste est libre, y compris un chantier qui avait déjà une date issue d'un calcul
+        // précédent — sinon plus aucune réoptimisation ne peut jamais rien retoucher.
+        const isPinned = c.scheduledDate && dayIndexOf(c.scheduledDate) >= 0 && isLockedChantier(c);
         if (isPinned) {
           fixedEntries.push({ idx: ch.stops[k] });
         } else { keepS.push(ch.stops[k]); keepL.push(ch.legs[k]); }
@@ -1118,12 +1129,11 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
   const assign = new Array(valid.length).fill(0);
   const loadByBin = new Array(k).fill(0); // charge (heures) attribuée à chaque binôme
 
-  // CHANTIERS À HEURE FIXE (urgences) OU DONT LA DATE A ÉTÉ FIXÉE EXPRESSÉMENT PAR L'UTILISATEUR
-  // (c.manualDate, via QuickModal ou la fiche chantier) : on RESPECTE le binôme choisi et on ne les
+  // CHANTIERS VERROUILLÉS (isLockedChantier) : on RESPECTE le binôme déjà choisi et on ne les
   // réaffecte pas géographiquement. On note leur index pour les exclure de la répartition automatique.
   const fixedForced = new Set();
   valid.forEach((c, i) => {
-    if ((c.fixedTime || c.manualDate) && c.scheduledBinome) {
+    if (isLockedChantier(c) && c.scheduledBinome) {
       const bi = binomes.findIndex(b => b.id === c.scheduledBinome);
       if (bi >= 0) { assign[i] = bi; loadByBin[bi] += (c.estimatedDuration || 0); fixedForced.add(i); }
     }
@@ -1193,12 +1203,7 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
     // jours réellement posables pour ce binôme = candidats non bloqués par une indisponibilité
     const locked = (lockedDaysByBin && lockedDaysByBin[binomes[ci].id]) || new Set();
     const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, binomes[ci].id, iso) && !locked.has(iso));
-    // pinByDate=false : en répartition automatique par zone géo, on laisse l'algo reclasser librement
-    // les chantiers qui n'ont qu'une date "héritée" d'un calcul précédent (sinon plus aucune
-    // réoptimisation n'a de sens : tout reste figé sur son ancien jour dès qu'un plan a été appliqué
-    // une fois). Les chantiers dont la date a été fixée EXPRESSÉMENT par l'utilisateur (c.manualDate)
-    // restent épinglés quoi qu'il arrive — planWeek le vérifie indépendamment de ce paramètre.
-    if (pool.length) byBin[binomes[ci].id] = await planWeek(pool, depot, workday, days, poseDaysISO, false, closures);
+    if (pool.length) byBin[binomes[ci].id] = await planWeek(pool, depot, workday, days, poseDaysISO, closures);
   }
   const ungeocoded = allChantiers.filter(c => !valid.includes(c));
   return { byBin, pools, ungeocoded };
@@ -3146,7 +3151,7 @@ ${sign}`,
             // on calcule une fois, puis on fige — les validations futures sur d'AUTRES jours ne
             // toucheront jamais ce résultat.
             try {
-              const lockedPlan = await planWeek(group, depot, workday, days, [iso], true, closures);
+              const lockedPlan = await planWeek(group, depot, workday, days, [iso], closures);
               if (lockedPlan.dayPlans[iso]) {
                 mergedDayPlans[iso] = lockedPlan.dayPlans[iso];
                 store[key] = { chantierIds: currentIds, dayPlan: lockedPlan.dayPlans[iso] };
@@ -3178,7 +3183,7 @@ ${sign}`,
           if (!bp.length) continue;
           setProgress(bin.name);
           const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, bin.id, iso) && !lockedDaysByBin[bin.id].has(iso));
-          next[bin.id] = await planWeek(bp, depot, workday, days, poseDaysISO, true, closures);
+          next[bin.id] = await planWeek(bp, depot, workday, days, poseDaysISO, closures);
         }
         setSchedules(await mergeWithLocked(next));
         setUsedPools(mPools);
@@ -3232,7 +3237,9 @@ ${sign}`,
     if (!chantierObj || !binId || !iso) return;
     const bin = binomes.find(b => b.id === binId);
     if (!bin) return;
-    const updated = { ...chantierObj, scheduledBinome: binId, scheduledDate: iso, status: 'planifie' };
+    // Un glisser-déposer sur un jour est un choix manuel au même titre que QuickModal : on le marque
+    // manualDate pour qu'une future réoptimisation ne le redéplace pas ailleurs.
+    const updated = { ...chantierObj, scheduledBinome: binId, scheduledDate: iso, status: 'planifie', manualDate: true };
     setComputing(true); setProgress('Calcul de la proposition…');
     try {
       // depot, workday, unavail sont déjà disponibles via les props d'EmploiDuTemps
@@ -3250,7 +3257,8 @@ ${sign}`,
       );
       const poseDaysISO = days.slice(0, 4).map(d => toISO(d))
         .filter(d => !isUnavailable(unavail, binId, d) && !lockedDays.has(d));
-      const proposedResult = await planWeek(binPool, depot, workday, days, poseDaysISO, true);
+      const closures = (sGet(SK.settings, {}).unavail || []).filter(u => u.scope === 'all').map(u => u.from).filter(Boolean);
+      const proposedResult = await planWeek(binPool, depot, workday, days, poseDaysISO, closures);
       // Afficher la modale de confirmation avec avant/après
       setDropProposal({ chantierObj, updated, binId, iso, bin, currentPlan: existingRes, proposedResult });
     } catch(e) { console.error('[dropOnDay] erreur:', e); setError(String(e)); }
