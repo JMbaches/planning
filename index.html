@@ -717,31 +717,6 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
     }
     return t;
   };
-  const buildChunks = (endLimitMin) => {
-    const ch = []; let cur = null;
-    for (const idx of order) {
-      if (cur) {
-        const trial = [...cur.stops, idx];
-        // on accepte d'AJOUTER idx si sa pose peut COMMENCER avant 18h (laisser au moins 30 min de pose)
-        const startOfIdx = dayStartTimeFor(trial, idx);
-        if (startOfIdx + 30 <= endLimitMin) {
-          cur.legs.push(legBetween(cur.stops[cur.stops.length - 1], idx));
-          cur.stops.push(idx);
-          cur.content += (cur.legs[cur.legs.length - 1] || 0) + poseSecOf(idx);
-          continue;
-        }
-      }
-      // sinon : nouveau jour, on part du dépôt
-      const approach = legFromDepot(idx);
-      const aloneEnd = dayEndMinFor([idx]);
-      cur = { stops: [idx], legs: [approach], content: poseSecOf(idx) + approach, oversized: aloneEnd > DAY_END + 1 };
-      ch.push(cur);
-    }
-    return ch;
-  };
-
-  // On remplit en visant une fin à 18h max → journées pleines.
-  let chunks = buildChunks(DAY_END);
   // Règle JM Bâches : poses du lundi au jeudi (4 jours max), un jour réservé au retour dépôt.
   // poseDaysISO (si fourni) = liste des dates RÉELLEMENT posables (après retrait des indisponibilités).
   const POSE_DAYS = 4;
@@ -757,49 +732,70 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
     const idx = allISO.indexOf(lastPoseISO);
     return (idx >= 0 && idx + 1 < allISO.length) ? allISO[idx + 1] : null;
   })();
-
-  // Les chunks au-delà des jours posables ne tiennent pas dans la semaine → à reporter.
   const usablePoseDays = poseList.length;
 
-  // PRÉ-PLACEMENT DES CHANTIERS À HEURE FIXE : on s'assure que chaque chantier d'urgence (fixedTime)
-  // se trouve bien dans le chunk du JOUR de sa date fixée. On le retire de là où le découpage l'a mis,
-  // et on l'insère dans le chunk correspondant à poseList[index] = sa date. Ainsi l'ancrage horaire
-  // (plus bas) trouvera bien la pose le bon jour.
+  // ---- CONSTRUCTION DES JOURNÉES ----
+  // 1) Chaque chantier VERROUILLÉ (isLockedChantier) est placé sur SON jour, toujours — s'il tombe
+  //    un jour non posable cette semaine (absence/fermeture), il part directement en overflow, jamais
+  //    replanifié ailleurs en douce.
+  // 2) Les chantiers FLOTTANTS remplissent chaque jour dans l'ordre de tournée (géo). Si le PROCHAIN
+  //    de la tournée ne rentre pas avant la coupure, on cherche le flottant le plus proche du dernier
+  //    arrêt du jour (< GAP_FILL_RADIUS_KM) qui rentrerait, pour ne pas laisser un trou. Si aucun
+  //    n'est assez proche, on clôt la journée ici plutôt que de faire un détour incohérent — le
+  //    chantier initialement prévu reste flottant pour les jours suivants (jamais perdu).
+  const GAP_FILL_RADIUS_KM = 30;
+  const chunks = Array.from({ length: usablePoseDays }, () => ({ stops: [], legs: [] }));
+  const lockedOrphans = [];
+  let unplacedFloating = []; // flottants qui ne rentrent nulle part cette semaine → overflow, jamais perdus
   {
-    // index de jour cible pour une date donnée
-    const dayIndexOf = (iso) => poseList.indexOf(iso);
-    // retire les fixés de tous les chunks
-    const fixedEntries = []; // { idx, legFromChunk }
-    chunks.forEach(ch => {
-      const keepS = [], keepL = [];
-      for (let k = 0; k < ch.stops.length; k++) {
-        const c = pool[ch.stops[k]];
-        // Épingler à la date : RÈGLE UNIQUE isLockedChantier (valide / heure fixe / date manuelle).
-        // Tout le reste est libre, y compris un chantier qui avait déjà une date issue d'un calcul
-        // précédent — sinon plus aucune réoptimisation ne peut jamais rien retoucher.
-        const isPinned = c.scheduledDate && dayIndexOf(c.scheduledDate) >= 0 && isLockedChantier(c);
-        if (isPinned) {
-          fixedEntries.push({ idx: ch.stops[k] });
-        } else { keepS.push(ch.stops[k]); keepL.push(ch.legs[k]); }
-      }
-      ch.stops = keepS; ch.legs = keepL;
-    });
-    // (ré)insère chaque fixé dans le chunk de sa date (en créant les chunks manquants)
-    fixedEntries.forEach(({ idx }) => {
-      const di = dayIndexOf(pool[idx].scheduledDate);
-      while (chunks.length <= di) chunks.push({ stops: [], legs: [] });
+    const placedIdx = new Set();
+    for (const idx of order) {
+      if (!isLockedChantier(pool[idx])) continue;
+      const di = poseList.indexOf(pool[idx].scheduledDate);
+      if (di >= 0) { chunks[di].stops.push(idx); placedIdx.add(idx); }
+      else { lockedOrphans.push(idx); placedIdx.add(idx); }
+    }
+    // Cohérence du trajet : les verrouillés d'un même jour suivent l'ordre de tournée global.
+    chunks.forEach(ch => ch.stops.sort((a, b) => order.indexOf(a) - order.indexOf(b)));
+
+    const remaining = order.filter(idx => !placedIdx.has(idx));
+    const tryFit = (ch, idx) => (dayStartTimeFor([...ch.stops, idx], idx) + 30) <= DAY_END;
+    for (let di = 0; di < chunks.length; di++) {
+      const iso = poseList[di];
       const ch = chunks[di];
-      // on le met en tête de journée (l'ancrage le repositionnera à l'heure exacte ensuite)
-      ch.stops.unshift(idx);
-      ch.legs.unshift(legFromDepot(idx));
-    });
-    // NB : on ne purge PAS les chunks vides — leur index doit rester aligné sur poseList (les jours).
+      while (remaining.length) {
+        const lastGeo = ch.stops.length ? geoByIdx[ch.stops[ch.stops.length - 1]] : null;
+        // Le candidat le plus proche géographiquement du dernier arrêt du jour, parmi ceux qui
+        // conviennent (fenêtre + capacité restante). IMPORTANT : ce test s'applique à TOUS les
+        // candidats, y compris le prochain strict de la tournée — sinon, quand le routage réel est
+        // indisponible (repli sur une durée par défaut identique pour tous les trajets), le test de
+        // capacité seul ne détecte plus un chantier en réalité bien trop loin.
+        let best = -1, bestDist = Infinity;
+        remaining.forEach((idx, i) => {
+          if (!dateAllowed(pool[idx], iso) || !tryFit(ch, idx)) return;
+          const g = geoByIdx[idx];
+          const d = (!lastGeo || !g) ? 0 : haversineKm(lastGeo, g);
+          if (d < bestDist) { bestDist = d; best = i; }
+        });
+        if (best >= 0 && (!lastGeo || bestDist <= GAP_FILL_RADIUS_KM)) {
+          ch.stops.push(remaining.splice(best, 1)[0]);
+          continue;
+        }
+        break; // rien de proche ne convient → journée close ici
+      }
+      ch.legs = ch.stops.map((s, k) => k === 0 ? legFromDepot(s) : legBetween(ch.stops[k - 1], s));
+      ch.oversized = ch.stops.some(s => dayEndMinFor([s]) > DAY_END + 1);
+    }
+    // Tous les jours sont pleins et il reste des flottants : jamais perdus, direction overflow.
+    unplacedFloating = remaining;
   }
 
-  const scheduledDaysCount = Math.min(chunks.length, usablePoseDays);
+  const scheduledDaysCount = usablePoseDays;
 
   // affectation aux jours de la semaine + construction des horaires
   const dayPlans = {}; const assignments = []; const overflow = [];
+  lockedOrphans.forEach(idx => overflow.push(pool[idx]));
+  unplacedFloating.forEach(idx => overflow.push(pool[idx]));
   // morningTravel[di] : trajet à poser le MATIN du jour di.
   //  - { sec, returnDepot:false, fromDepot:false } : liaison "nuit sur place" reportée (déborde 18h la veille)
   //  - { sec, fromDepot:true } : ré-approche depuis le SIÈGE le matin (la veille on est rentré au siège)
@@ -812,6 +808,9 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
     if (!chunk.stops || chunk.stops.length === 0) continue; // jour sans pose (peut arriver avec un créneau fixe placé un autre jour)
     if (di >= usablePoseDays) { chunk.stops.forEach(s => overflow.push(pool[s])); continue; }
     const iso = poseList[di];
+    // 1er jour TRAVAILLÉ de la semaine (pas forcément di===0 : un jour peut être vide si tous ses
+    // chantiers sont des verrouillés placés plus tard) → approche depuis le dépôt le matin.
+    const isFirstWorkedDay = chunks.slice(0, di).every(c => !c.stops || c.stops.length === 0);
 
     // Respect IMPÉRATIF de la fenêtre client : tout chantier de ce chunk dont la fenêtre n'autorise
     // pas le jour 'iso' est retiré et reporté (jamais posé hors de sa fenêtre).
@@ -835,8 +834,8 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
 
     const buildDay = () => {
       let events = []; let t = dayStart;
-      const approachSec = di === 0 ? (chunk.legs[0] || 0) : (morningTravel[di]?.sec || 0);
-      const approachFromDepot = di === 0 || !!(morningTravel[di]?.fromDepot);
+      const approachSec = (isFirstWorkedDay && !morningTravel[di]) ? (chunk.legs[0] || 0) : (morningTravel[di]?.sec || 0);
+      const approachFromDepot = isFirstWorkedDay || !!(morningTravel[di]?.fromDepot);
       const localAssign = [];
       // Trajet vers le premier stop du jour (depuis le dépôt le lundi, ou depuis le site précédent)
       if (approachSec > 0) {
@@ -856,9 +855,11 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
         const lunchHit = lunchDur && startAfterTravel < lunchStart && startAfterTravel + durMin > lunchStart;
         const realEnd = startAfterTravel + durMin + (lunchHit ? lunchDur : 0);
         if (realEnd > DAY_END) {
-          // Ne tient pas → reporter sans la pousser dans events
-          deferredK.add(k);
-          break; // les stops suivants sont aussi reportés
+          // Ne tient pas → reporter sans la pousser dans events. Les stops SUIVANTS aussi (on ne
+          // recule jamais dans la journée) — sinon ils resteraient dans chunk.stops sans jamais être
+          // ni posés ni reportés, et disparaîtraient silencieusement (chantier perdu).
+          for (let j = k; j < chunk.stops.length; j++) deferredK.add(j);
+          break;
         }
         if (legMin > 0) { events.push({ type: 'travel', start: t, end: t + legMin, _k: k }); t += legMin; }
         events.push({ type: 'pose', start: t, end: t + durMin, chantier: ch, _k: k, _idx: chunk.stops[k] });
@@ -904,9 +905,15 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
         const ni = di + 1;
         if (ni < usablePoseDays) {
           chunks[ni] = chunks[ni] || { stops: [], legs: [] };
-          const movedLegs = movedStops.map((s, i) => i === 0 ? legFromDepot(s) : legBetween(movedStops[i - 1], s));
-          chunks[ni].stops = [...movedStops, ...chunks[ni].stops];
-          chunks[ni].legs = [...movedLegs, ...chunks[ni].legs];
+          const nextCh = chunks[ni];
+          // Insérer les reports APRÈS les chantiers verrouillés du lendemain (heure fixe / date
+          // manuelle / validé) : un report ne doit jamais pouvoir déplacer un verrouillé de sa place.
+          let insertAt = 0;
+          while (insertAt < nextCh.stops.length && isLockedChantier(pool[nextCh.stops[insertAt]])) insertAt++;
+          nextCh.stops = [...nextCh.stops.slice(0, insertAt), ...movedStops, ...nextCh.stops.slice(insertAt)];
+          // Legs recalculés en entier depuis les stops — un simple décalage laisserait un leg stale
+          // (ex: « depuis le dépôt » pour un stop qui a maintenant un prédécesseur).
+          nextCh.legs = nextCh.stops.map((s, k) => k === 0 ? legFromDepot(s) : legBetween(nextCh.stops[k - 1], s));
         } else {
           movedStops.forEach(s => overflow.push(pool[s]));
         }
@@ -918,9 +925,13 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
       return { events, endMin, localAssign };
     };
 
-    const isLastPoseDayRef = { v: di >= scheduledDaysCount - 1 };
     let { events, endMin, localAssign } = buildDay();
-    const isLastPoseDay = isLastPoseDayRef.v;
+    // Dernier jour de pose = plus aucun chunk non vide après celui-ci (évalué APRÈS buildDay, qui a
+    // pu reporter des poses au lendemain) — sinon un jour vide en fin de semaine (ex: tout casé avant
+    // jeudi) ferait croire à tort qu'un jour plus tôt est « le dernier », avec un mauvais calcul du
+    // retour au dépôt / nuit sur place.
+    const isLastPoseDay = di >= usablePoseDays - 1
+      || chunks.slice(di + 1, usablePoseDays).every(c => !c || !c.stops || !c.stops.length);
 
     // ANCRAGE HORAIRE : si un chantier de ce jour a une heure fixe demandée (fixedTime), on cale sa
     // pose à cette heure et on réagence les autres poses autour. On CONSERVE les temps de trajet entre
@@ -1004,7 +1015,16 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
           const id = p.ev.chantier && p.ev.chantier.id;
           const ix = localAssign.findIndex(a => a.id === id);
           if (ix >= 0) localAssign.splice(ix, 1);
-          if (p.ev._idx != null) overflow.push(pool[p.ev._idx]);
+          if (p.ev._idx != null) {
+            overflow.push(pool[p.ev._idx]);
+            // le retirer aussi de chunk.stops : le retour au dépôt / la nuit sur place se calculent
+            // depuis le DERNIER CHANTIER RÉELLEMENT VISITÉ, pas un stop qu'on vient de reporter.
+            const sIx = chunk.stops.indexOf(p.ev._idx);
+            if (sIx >= 0) {
+              chunk.stops.splice(sIx, 1);
+              chunk.legs = chunk.stops.map((s, k) => k === 0 ? legFromDepot(s) : legBetween(chunk.stops[k - 1], s));
+            }
+          }
           continue;
         }
         t = advance(t, lead, p.realDur, out, p.ev);
@@ -1075,12 +1095,20 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
     const staysOnSite = !isLastPoseDay && !eveningReturn;
     // siegeReturnSec : durée de retour au siège — seulement si on rentre vraiment ce soir
     const siegeReturnSec = (!staysOnSite && hasDepot && lastStopId != null) ? legToDepot(lastStopId) : 0;
-    dayPlans[iso] = { events, totalDriveSec, approachSec: (di === 0 ? (chunk.legs[0] || 0) : (morningTravel[di]?.sec || 0)), eveningSec, eveningReturn, endMin, source, oversized, siegeReturnSec, staysOnSite, isLastPoseDay };
+    dayPlans[iso] = { events, totalDriveSec, approachSec: (isFirstWorkedDay && !morningTravel[di] ? (chunk.legs[0] || 0) : (morningTravel[di]?.sec || 0)), eveningSec, eveningReturn, endMin, source, oversized, siegeReturnSec, staysOnSite, isLastPoseDay };
   }
 
   // Retour au dépôt : posé le lendemain du dernier jour de pose (à partir de 8h00).
-  if (hasDepot && scheduledDaysCount > 0 && returnDayISO) {
-    const lastChunk = chunks[scheduledDaysCount - 1];
+  // On part du DERNIER CHUNK NON VIDE : si le travail s'est terminé avant la fin de semaine
+  // posable, les jours suivants sont vides et ne doivent pas servir de base au calcul du retour.
+  const lastWorkedIdx = (() => {
+    for (let i = usablePoseDays - 1; i >= 0; i--) {
+      if (chunks[i] && chunks[i].stops && chunks[i].stops.length) return i;
+    }
+    return -1;
+  })();
+  if (hasDepot && lastWorkedIdx >= 0 && returnDayISO) {
+    const lastChunk = chunks[lastWorkedIdx];
     const returnSec = legToDepot(lastChunk.stops[lastChunk.stops.length - 1]);
     if (returnSec > 0) {
       const iso = returnDayISO;
@@ -2897,6 +2925,7 @@ function EmploiDuTemps({ chantiers, binomes, depot, workday, unavail, upsert, sh
   const [dragChantier, setDragChantier] = useState(null); // { id, binId } en cours de drag
   const [dragOverCol, setDragOverCol] = useState(null);   // 'binId_iso' survolé pendant le drag
   const [dropProposal, setDropProposal] = useState(null); // { chantierObj, binId, iso, bin, currentPlan, proposedResult }
+  const [dropConfirmStep, setDropConfirmStep] = useState(1); // 2 = l'utilisateur a vu la liste des chantiers déprogrammés et confirme quand même
 
   const weekKey = useMemo(() => toISO(weekStart), [weekStart]); // clé d'enregistrement = lundi ISO
 
@@ -3259,23 +3288,34 @@ ${sign}`,
         .filter(d => !isUnavailable(unavail, binId, d) && !lockedDays.has(d));
       const closures = (sGet(SK.settings, {}).unavail || []).filter(u => u.scope === 'all').map(u => u.from).filter(Boolean);
       const proposedResult = await planWeek(binPool, depot, workday, days, poseDaysISO, closures);
+      // Chantiers que la recomposition du binôme déborderait, EN PLUS du nouveau déposé — c'est ce que
+      // confirmDropProposal déprogrammerait. Calculé une seule fois, servira à la fois à l'affichage
+      // et à l'action, pour ne jamais divergent entre ce qui est montré et ce qui est fait.
+      const displaced = (proposedResult.overflow || []).filter(c => {
+        if (c.id === updated.id) return false;
+        const existing = chantiers.find(x => x.id === c.id);
+        return existing && existing.scheduledBinome === binId && existing.status !== 'valide' && existing.status !== 'fait';
+      });
       // Afficher la modale de confirmation avec avant/après
-      setDropProposal({ chantierObj, updated, binId, iso, bin, currentPlan: existingRes, proposedResult });
+      setDropConfirmStep(1);
+      setDropProposal({ chantierObj, updated, binId, iso, bin, currentPlan: existingRes, proposedResult, displaced });
     } catch(e) { console.error('[dropOnDay] erreur:', e); setError(String(e)); }
     finally { setComputing(false); setProgress(''); }
   };
 
   const confirmDropProposal = () => {
     if (!dropProposal) return;
-    const { updated, binId, proposedResult } = dropProposal;
+    const { updated, binId, proposedResult, displaced } = dropProposal;
+    // Si d'autres chantiers seraient déprogrammés, une 2e confirmation explicite est obligatoire
+    // (voir la modale) — on ne déprogramme jamais rien silencieusement en un seul clic.
+    if (displaced.length > 0 && dropConfirmStep < 2) return;
     // Appliquer le nouveau chantier droppé
     upsert(updated);
-    // Déprogrammer les chantiers poussés en overflow par le recalcul
-    (proposedResult.overflow || []).forEach(c => {
+    // Déprogrammer les chantiers que la recomposition du binôme a fait déborder (liste déjà validée
+    // par l'utilisateur à l'écran précédent de la modale).
+    displaced.forEach(c => {
       const existing = chantiers.find(x => x.id === c.id);
-      if (existing && existing.scheduledBinome === binId && existing.status !== 'valide' && existing.status !== 'fait') {
-        upsert({ ...existing, scheduledDate: '', scheduledBinome: '', status: 'a_planifier' });
-      }
+      if (existing) upsert({ ...existing, scheduledDate: '', scheduledBinome: '', status: 'a_planifier' });
     });
     setSchedules(prev => ({ ...prev, [binId]: proposedResult }));
     setDropProposal(null);
@@ -4110,15 +4150,44 @@ ${sign}`,
                 );
               })}
             </div>
-            {dropProposal.proposedResult?.overflow?.some(c => c.id !== dropProposal.chantierObj.id) && (
-              <div className="text-xs p-2 rounded mb-4" style={{ background: '#FEF3C7', color: '#92400E' }}>
-                ⚠ {dropProposal.proposedResult.overflow.filter(c => c.id !== dropProposal.chantierObj.id).map(c => c.clientName).join(', ')} sera repoussé en overflow.
+            {dropProposal.displaced.length === 0 ? (
+              <div className="flex gap-3 justify-end">
+                <button className="btn-secondary" onClick={() => setDropProposal(null)}>Annuler</button>
+                <button className="btn-primary" onClick={confirmDropProposal}>Confirmer</button>
               </div>
+            ) : dropConfirmStep === 1 ? (
+              <>
+                <div className="text-xs p-3 rounded mb-4 flex items-start gap-2" style={{ background: 'var(--danger-bg, #FBE4DC)', color: 'var(--danger, #C0392B)' }}>
+                  <I.alert size={14} style={{ marginTop: 1, flexShrink: 0 }} />
+                  <span><strong>{dropProposal.displaced.length} chantier{dropProposal.displaced.length > 1 ? 's' : ''} déjà placé{dropProposal.displaced.length > 1 ? 's' : ''}</strong> {dropProposal.displaced.length > 1 ? 'seraient déprogrammés' : 'serait déprogrammé'} pour faire de la place. Rien n'est fait tant que tu n'as pas vu la liste et confirmé.</span>
+                </div>
+                <div className="flex gap-3 justify-end">
+                  <button className="btn-secondary" onClick={() => setDropProposal(null)}>Annuler</button>
+                  <button className="btn-primary" onClick={() => setDropConfirmStep(2)}>Voir ce qui serait déprogrammé →</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-xs p-3 rounded mb-4" style={{ background: 'var(--danger-bg, #FBE4DC)', color: 'var(--danger, #C0392B)' }}>
+                  <div className="flex items-start gap-2 mb-2">
+                    <I.alert size={14} style={{ marginTop: 1, flexShrink: 0 }} />
+                    <strong>Ces chantiers seront remis « à planifier » (date et binôme effacés) :</strong>
+                  </div>
+                  <ul style={{ marginLeft: 22, listStyle: 'disc' }}>
+                    {dropProposal.displaced.map(c => (
+                      <li key={c.id}>{c.clientName} — {c.city} · {c.estimatedDuration}h</li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="flex gap-3 justify-end">
+                  <button className="btn-secondary" onClick={() => setDropProposal(null)}>Annuler</button>
+                  <button className="btn-secondary" onClick={() => setDropConfirmStep(1)}>← Retour</button>
+                  <button className="btn-primary" style={{ background: 'var(--danger, #C0392B)' }} onClick={confirmDropProposal}>
+                    Confirmer et déprogrammer {dropProposal.displaced.length} chantier{dropProposal.displaced.length > 1 ? 's' : ''}
+                  </button>
+                </div>
+              </>
             )}
-            <div className="flex gap-3 justify-end">
-              <button className="btn-secondary" onClick={() => setDropProposal(null)}>Annuler</button>
-              <button className="btn-primary" onClick={confirmDropProposal}>Confirmer</button>
-            </div>
           </div>
         </div>
       )}
