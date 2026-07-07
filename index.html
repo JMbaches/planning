@@ -740,9 +740,15 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
   //    replanifié ailleurs en douce.
   // 2) Les chantiers FLOTTANTS remplissent chaque jour dans l'ordre de tournée (géo). Si le PROCHAIN
   //    de la tournée ne rentre pas avant la coupure, on cherche le flottant le plus proche du dernier
-  //    arrêt du jour (< GAP_FILL_RADIUS_KM) qui rentrerait, pour ne pas laisser un trou. Si aucun
-  //    n'est assez proche, on clôt la journée ici plutôt que de faire un détour incohérent — le
-  //    chantier initialement prévu reste flottant pour les jours suivants (jamais perdu).
+  //    arrêt du jour qui rentrerait, pour ne pas laisser un trou. Si aucun ne convient, on clôt la
+  //    journée ici plutôt que de faire un détour incohérent — le chantier initialement prévu reste
+  //    flottant pour les jours suivants (jamais perdu).
+  // Le temps de trajet RÉEL (matrix) est déjà ce qui détermine si un chantier « rentre » (tryFit) —
+  // c'est cette contrainte qui doit décider, pas un plafond en kilomètres à vol d'oiseau : sur le
+  // terrain, 45-90 min de route entre deux chantiers de la même journée est tout à fait normal en
+  // zone rurale. Le plafond GAP_FILL_RADIUS_KM ne sert QUE de filet de sécurité pour le cas où le
+  // routage réel est indisponible (matrix === null, repli sur une durée par défaut identique pour
+  // tous les trajets) — sans lui, un chantier réellement à 90km pourrait sembler "rentrer" à tort.
   const GAP_FILL_RADIUS_KM = 30;
   const chunks = Array.from({ length: usablePoseDays }, () => ({ stops: [], legs: [] }));
   const lockedOrphans = [];
@@ -765,11 +771,8 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
       const ch = chunks[di];
       while (remaining.length) {
         const lastGeo = ch.stops.length ? geoByIdx[ch.stops[ch.stops.length - 1]] : null;
-        // Le candidat le plus proche géographiquement du dernier arrêt du jour, parmi ceux qui
-        // conviennent (fenêtre + capacité restante). IMPORTANT : ce test s'applique à TOUS les
-        // candidats, y compris le prochain strict de la tournée — sinon, quand le routage réel est
-        // indisponible (repli sur une durée par défaut identique pour tous les trajets), le test de
-        // capacité seul ne détecte plus un chantier en réalité bien trop loin.
+        // Le candidat qui convient (fenêtre + temps de trajet réel restant), le plus proche du
+        // dernier arrêt du jour en cas d'égalité — pour privilégier une tournée cohérente.
         let best = -1, bestDist = Infinity;
         remaining.forEach((idx, i) => {
           if (!dateAllowed(pool[idx], iso) || !tryFit(ch, idx)) return;
@@ -777,11 +780,14 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
           const d = (!lastGeo || !g) ? 0 : haversineKm(lastGeo, g);
           if (d < bestDist) { bestDist = d; best = i; }
         });
-        if (best >= 0 && (!lastGeo || bestDist <= GAP_FILL_RADIUS_KM)) {
+        // Routage réel disponible → on fait confiance au temps de trajet réel (déjà vérifié par
+        // tryFit) sans plafond km arbitraire. Routage indisponible (matrix null) → filet de sécurité.
+        const geoOk = matrix !== null || !lastGeo || bestDist <= GAP_FILL_RADIUS_KM;
+        if (best >= 0 && geoOk) {
           ch.stops.push(remaining.splice(best, 1)[0]);
           continue;
         }
-        break; // rien de proche ne convient → journée close ici
+        break; // rien ne convient → journée close ici
       }
       ch.legs = ch.stops.map((s, k) => k === 0 ? legFromDepot(s) : legBetween(ch.stops[k - 1], s));
       ch.oversized = ch.stops.some(s => dayEndMinFor([s]) > DAY_END + 1);
