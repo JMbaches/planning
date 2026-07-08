@@ -799,23 +799,44 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
       const ch = chunks[di];
       while (remaining.length) {
         const lastGeo = ch.stops.length ? geoByIdx[ch.stops[ch.stops.length - 1]] : dayAnchorGeo[di];
-        // Le candidat qui convient (fenêtre + temps de trajet réel restant), le plus proche du
-        // dernier arrêt du jour en cas d'égalité — pour privilégier une tournée cohérente.
-        let best = -1, bestDist = Infinity;
+        // Tous les candidats qui conviennent (fenêtre + trajet réel restant), avec leur distance au
+        // dernier arrêt du jour.
+        const fitting = [];
         remaining.forEach((idx, i) => {
           if (!dateAllowed(pool[idx], iso) || !tryFit(ch, idx)) return;
           const g = geoByIdx[idx];
           const d = (!lastGeo || !g) ? 0 : haversineKm(lastGeo, g);
-          if (d < bestDist) { bestDist = d; best = i; }
+          fitting.push({ i, idx, d });
         });
+        if (!fitting.length) break;
+        const bestDist = Math.min(...fitting.map(f => f.d));
         // Routage réel disponible → on fait confiance au temps de trajet réel (déjà vérifié par
         // tryFit) sans plafond km arbitraire. Routage indisponible (matrix null) → filet de sécurité.
         const geoOk = matrix !== null || !lastGeo || bestDist <= GAP_FILL_RADIUS_KM;
-        if (best >= 0 && geoOk) {
-          ch.stops.push(remaining.splice(best, 1)[0]);
-          continue;
+        if (!geoOk) break;
+        let chosen;
+        if (lastGeo) {
+          // Référence géographique réelle connue (pas le 1er arrêt du jour) : parmi les candidats à
+          // peu près aussi proches (tolérance ORDER_TIEBREAK_KM), on privilégie la commande la plus
+          // ANCIENNE (orderDate) — un simple départage, jamais un vrai détour : la route reste le
+          // critère principal, ça ne choisit qu'entre des arrêts déjà équivalents en distance. Sans
+          // orderDate, un chantier est traité comme le plus récent.
+          const ORDER_TIEBREAK_KM = 5;
+          const tied = fitting.filter(f => f.d <= bestDist + ORDER_TIEBREAK_KM);
+          tied.sort((a, b) => {
+            const aOrder = pool[a.idx].orderDate || '9999-99-99';
+            const bOrder = pool[b.idx].orderDate || '9999-99-99';
+            if (aOrder !== bOrder) return aOrder.localeCompare(bOrder);
+            return a.d - b.d;
+          });
+          chosen = tied[0];
+        } else {
+          // 1er arrêt du jour : aucune référence géographique encore connue (d=0 pour tous les
+          // candidats, ce n'est pas une vraie égalité) — on garde l'ordre de tournée d'origine, sinon
+          // l'ancienneté déciderait à tort du 1er arrêt de CHAQUE jour sans aucune réalité géographique.
+          chosen = fitting[0];
         }
-        break; // rien ne convient → journée close ici
+        ch.stops.push(remaining.splice(chosen.i, 1)[0]);
       }
       ch.legs = ch.stops.map((s, k) => k === 0 ? legFromDepot(s) : legBetween(ch.stops[k - 1], s));
       ch.oversized = ch.stops.some(s => dayEndMinFor([s]) > DAY_END + 1);
@@ -1411,11 +1432,17 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
   //    On remplit en priorité les binômes qui ont le plus de capacité locale libre → le binôme parti
   //    loin (ex : Paris) reçoit peu (ou pas) de local, pour que tout son Paris tienne dans la semaine.
   const localCapacityLeft = (b) => (WEEK_POSE_BUDGET - farLoadByBin[b]) - (loadByBin[b] - farLoadByBin[b]);
-  // Les chantiers en retard (_softWindow) passent après les autres dans le tri local
+  // Les chantiers en retard (_softWindow) passent après les autres dans le tri local. À égalité,
+  // priorité à la commande la plus ANCIENNE (orderDate) — sinon on retombe sur la durée (comportement
+  // d'origine). Un chantier sans orderDate est traité comme le plus récent (jamais prioritaire sur un
+  // chantier daté), pour ne pas fausser le tri tant que la migration des fiches n'est pas faite.
   proche.sort((a, b) => {
     const aLate = valid[a]._softWindow ? 1 : 0;
     const bLate = valid[b]._softWindow ? 1 : 0;
     if (aLate !== bLate) return aLate - bLate;
+    const aOrder = valid[a].orderDate || '9999-99-99';
+    const bOrder = valid[b].orderDate || '9999-99-99';
+    if (aOrder !== bOrder) return aOrder.localeCompare(bOrder);
     return (valid[b].estimatedDuration || 0) - (valid[a].estimatedDuration || 0);
   });
   // Clustering géographique GLOUTON des proches : sans lui, « proche du dépôt » ne veut rien dire
@@ -1502,7 +1529,8 @@ Extrais du contrat ci-joint les informations suivantes au format JSON STRICT (ri
   "materials": ["matériel spécifique requis"],
   "constraints": "contraintes particulières (accès bassin, local technique éloigné, margelles à percer, alimentation électrique, etc.)",
   "notes": "informations utiles supplémentaires en quelques mots",
-  "weatherSensitive": true_ou_false
+  "weatherSensitive": true_ou_false,
+  "orderDate": "date de signature/commande du contrat au format AAAA-MM-JJ, sinon ''"
 }
 
 Si une info est absente : chaîne vide, tableau vide, ou 2.5 pour la durée. Réponds UNIQUEMENT le JSON.`;
@@ -2059,7 +2087,7 @@ function ChantierCard({ c, binomes, onEdit, onFeedback, onArchive, onToggleValid
 
 /* ---------- Form ---------- */
 function ChantierForm({ existing, binomes, poseTypes, apiKey, onSave, onCancel, showToast, goToSettings }) {
-  const empty = { id:'', clientName:'', clientPhone:'', clientEmail:'', address:'', city:'', postalCode:'', type:'', dimensions:'', estimatedDuration:4, materials:[], constraints:'', notes:'', weatherSensitive:true, status:'a_planifier', scheduledDate:'', scheduledBinome:'', fixedTime:'', notBefore:'', notAfter:'', linkId:'', linkRole:0, linkGap:0 };
+  const empty = { id:'', clientName:'', clientPhone:'', clientEmail:'', address:'', city:'', postalCode:'', type:'', dimensions:'', estimatedDuration:4, materials:[], constraints:'', notes:'', weatherSensitive:true, status:'a_planifier', scheduledDate:'', scheduledBinome:'', fixedTime:'', notBefore:'', notAfter:'', linkId:'', linkRole:0, linkGap:0, orderDate:'' };
   const [data, setData] = useState(existing || empty);
   // Option "deux interventions" (immergé total) : durées des deux interventions + délai mini entre elles.
   const [twoVisits, setTwoVisits] = useState(false);
@@ -2166,6 +2194,10 @@ function ChantierForm({ existing, binomes, poseTypes, apiKey, onSave, onCancel, 
               <Field label="Téléphone"><input value={data.clientPhone} onChange={e => set('clientPhone', e.target.value)} /></Field>
               <Field label="Email"><input value={data.clientEmail} onChange={e => set('clientEmail', e.target.value)} /></Field>
             </div>
+            <Field label="Date de commande">
+              <input type="date" value={data.orderDate || ''} onChange={e => set('orderDate', e.target.value)} />
+              <p className="text-xs mt-1" style={{ color: 'var(--ink-faint)' }}>Sert à départager : à distance égale, l'optimisation essaie de caler les commandes les plus anciennes en premier.</p>
+            </Field>
           </div>
         </section>
 
@@ -3364,7 +3396,11 @@ ${sign}`,
         if (!seen.has(c.id) && !placed.has(c.id)) { seen.add(c.id); result.push(c); }
       });
     });
-    return result.sort((a, b) => (a._softWindow ? 1 : 0) - (b._softWindow ? 1 : 0));
+    return result.sort((a, b) => {
+      const aLate = a._softWindow ? 1 : 0, bLate = b._softWindow ? 1 : 0;
+      if (aLate !== bLate) return aLate - bLate;
+      return (a.orderDate || '9999-99-99').localeCompare(b.orderDate || '9999-99-99');
+    });
   }, [schedules]);
 
   // Au changement de semaine (ou de mode), on repart à blanc PUIS on tente de recharger
@@ -4202,10 +4238,11 @@ ${sign}`,
                             onDragStart={e => { e.dataTransfer.setData('chantier', JSON.stringify(c)); setDragChantier({ id: c.id, binId: bin.id }); }}
                             onDragEnd={() => { setDragChantier(null); setDragOverCol(null); }}
                             style={{ cursor: 'grab', background: isLate ? '#FEE2E2' : 'var(--amber)', color: isLate ? '#991B1B' : '#7a4000', borderRadius: 6, padding: '4px 10px', fontSize: 12, userSelect: 'none', opacity: isDragging ? 0.4 : 1, display: 'flex', flexDirection: 'column', gap: 1 }}
-                            title={`${c.type} · ${c.estimatedDuration}h${isLate ? ' · deadline dépassée' : ''}`}
+                            title={`${c.type} · ${c.estimatedDuration}h${c.orderDate ? ' · commandé le ' + c.orderDate : ''}${isLate ? ' · deadline dépassée' : ''}`}
                           >
                             <span style={{ fontWeight: 700 }}>{c.clientName}</span>
                             <span style={{ fontWeight: 400, fontSize: 11 }}>{c.postalCode} {c.city} · {c.estimatedDuration}h{isLate ? ' ⚠' : ''}</span>
+                            {c.orderDate && <span style={{ fontWeight: 400, fontSize: 10, opacity: 0.75 }}>cmd. {c.orderDate}</span>}
                           </div>
                         );
                       })}
