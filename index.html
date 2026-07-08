@@ -799,13 +799,16 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
       const ch = chunks[di];
       while (remaining.length) {
         const lastGeo = ch.stops.length ? geoByIdx[ch.stops[ch.stops.length - 1]] : dayAnchorGeo[di];
-        // Tous les candidats qui conviennent (fenêtre + trajet réel restant), avec leur distance au
-        // dernier arrêt du jour.
+        // Référence pour juger de la proximité : le dernier arrêt du jour, sinon (jour encore vide,
+        // pas d'ancre) le DÉPÔT s'il est configuré — sans ça, le 1er arrêt de chaque jour n'aurait
+        // jamais de vraie base géographique et l'ancienneté ne pourrait jamais y jouer un rôle (cas
+        // pourtant fréquent : deux flottants qui se disputent la première place d'une journée vide).
+        const refGeo = lastGeo || depotGeo;
         const fitting = [];
         remaining.forEach((idx, i) => {
           if (!dateAllowed(pool[idx], iso) || !tryFit(ch, idx)) return;
           const g = geoByIdx[idx];
-          const d = (!lastGeo || !g) ? 0 : haversineKm(lastGeo, g);
+          const d = (!refGeo || !g) ? 0 : haversineKm(refGeo, g);
           fitting.push({ i, idx, d });
         });
         if (!fitting.length) break;
@@ -815,25 +818,26 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
         const geoOk = matrix !== null || !lastGeo || bestDist <= GAP_FILL_RADIUS_KM;
         if (!geoOk) break;
         let chosen;
-        if (lastGeo) {
-          // Référence géographique réelle connue (pas le 1er arrêt du jour) : parmi les candidats à
-          // peu près aussi proches (tolérance ORDER_TIEBREAK_KM), on privilégie la commande la plus
-          // ANCIENNE (orderDate) — un simple départage, jamais un vrai détour : la route reste le
-          // critère principal, ça ne choisit qu'entre des arrêts déjà équivalents en distance. Sans
-          // orderDate, un chantier est traité comme le plus récent.
-          const ORDER_TIEBREAK_KM = 5;
-          const tied = fitting.filter(f => f.d <= bestDist + ORDER_TIEBREAK_KM);
-          tied.sort((a, b) => {
-            const aOrder = pool[a.idx].orderDate || '9999-99-99';
-            const bOrder = pool[b.idx].orderDate || '9999-99-99';
-            if (aOrder !== bOrder) return aOrder.localeCompare(bOrder);
-            return a.d - b.d;
-          });
-          chosen = tied[0];
+        if (refGeo) {
+          // Référence géographique réelle connue (dernier arrêt, ou dépôt si jour encore vide) : une
+          // commande ANCIENNE réduit la distance PERÇUE du candidat (bonus dégressif avec l'âge,
+          // plafonné) — ça peut lui faire gagner sa place même face à un candidat sensiblement plus
+          // proche, pas seulement à distance strictement égale. Le plafond (AGE_BONUS_MAX_KM) évite un
+          // détour absurde même pour une commande très ancienne. Sans orderDate → bonus nul (traité
+          // comme le plus récent).
+          const AGE_BONUS_KM_PER_DAY = 1;   // 1 km de bonus perçu par jour d'ancienneté...
+          const AGE_BONUS_MAX_KM = 60;      // ...plafonné à 60 km
+          const ageBonusKm = (orderDate) => {
+            if (!orderDate) return 0;
+            const days = (Date.now() - Date.parse(orderDate + 'T00:00:00')) / 86400000;
+            return (!isFinite(days) || days <= 0) ? 0 : Math.min(AGE_BONUS_MAX_KM, days * AGE_BONUS_KM_PER_DAY);
+          };
+          fitting.forEach(f => { f.effDist = f.d - ageBonusKm(pool[f.idx].orderDate); });
+          fitting.sort((a, b) => a.effDist - b.effDist || a.d - b.d);
+          chosen = fitting[0];
         } else {
-          // 1er arrêt du jour : aucune référence géographique encore connue (d=0 pour tous les
-          // candidats, ce n'est pas une vraie égalité) — on garde l'ordre de tournée d'origine, sinon
-          // l'ancienneté déciderait à tort du 1er arrêt de CHAQUE jour sans aucune réalité géographique.
+          // Ni dernier arrêt ni dépôt connus (dépôt non configuré, jour encore vide) : aucune réalité
+          // géographique disponible — on garde l'ordre de tournée d'origine.
           chosen = fitting[0];
         }
         ch.stops.push(remaining.splice(chosen.i, 1)[0]);
