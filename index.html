@@ -4443,7 +4443,7 @@ ${sign}`,
    STATISTIQUES — retours de pose des chantiers terminés
    ========================================================================= */
 function Stats({ chantiers, binomes, poseTypes, setPoseTypes, showToast }) {
-  const done = useMemo(() => chantiers.filter(c => c.status === 'fait' || c.status === 'valide'), [chantiers]);
+  const done = useMemo(() => chantiers.filter(c => c.status === 'fait'), [chantiers]);
   const withReal = useMemo(() => done.filter(c => typeof c.realDuration === 'number' && c.realDuration > 0), [done]);
 
   // Temps réel moyen par type de volet (vs estimé)
