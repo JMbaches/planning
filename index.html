@@ -529,7 +529,9 @@ function parseHHMM(s, fallbackMin) {
   return h * 60 + m;
 }
 const minToHHMM = (min) => {
-  const h = Math.floor(min / 60), m = Math.round(min % 60);
+  // Arrondir AVANT de séparer heures/minutes : sinon 17h59,6 donnait h=17 et m=arrondi(59,6)=60 → « 17:60 ».
+  const total = Math.round(min);
+  const h = Math.floor(total / 60), m = total % 60;
   return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
 };
 
@@ -794,10 +796,15 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
 
     const remaining = order.filter(idx => !placedIdx.has(idx));
     const tryFit = (ch, idx) => (dayStartTimeFor([...ch.stops, idx], idx) + 30) <= DAY_END;
+    // Jours PASSÉS de la semaine affichée : on n'y place JAMAIS de nouveau chantier flottant (on ne
+    // planifie qu'à partir d'aujourd'hui inclus). Les chantiers déjà VERROUILLÉS (validés) sur un jour
+    // passé restent en place — ils sont déjà placés plus haut et ne doivent pas basculer en « à reporter ».
+    const todayISO = toISO(new Date());
     for (let di = 0; di < chunks.length; di++) {
       const iso = poseList[di];
       const ch = chunks[di];
-      while (remaining.length) {
+      const isPastDay = !!iso && iso < todayISO;
+      while (!isPastDay && remaining.length) {
         const lastGeo = ch.stops.length ? geoByIdx[ch.stops[ch.stops.length - 1]] : dayAnchorGeo[di];
         // Référence pour juger de la proximité : le dernier arrêt du jour, sinon (jour encore vide,
         // pas d'ancre) le DÉPÔT s'il est configuré — sans ça, le 1er arrêt de chaque jour n'aurait
@@ -1165,8 +1172,14 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
     // Info retour siège (affichée partout) : durée dernier chantier → siège, et si on rentre ou dort sur place.
     const lastStopId = chunk.stops[chunk.stops.length - 1];
     const staysOnSite = !isLastPoseDay && !eveningReturn;
-    // siegeReturnSec : durée de retour au siège — seulement si on rentre vraiment ce soir
-    const siegeReturnSec = (!staysOnSite && hasDepot && lastStopId != null) ? legToDepot(lastStopId) : 0;
+    // Sur le DERNIER jour de pose, le retour au siège n'est PAS conduit ce jour-là : il est posé le
+    // lendemain comme journée dédiée (returnOnly, plus bas). Le compter ici aussi le ferait apparaître
+    // DEUX FOIS — une fois dans le total « route » du dernier jour, une fois comme jour de retour —
+    // alors qu'il n'est roulé qu'une seule fois. On l'exclut donc quand un jour de retour va le porter.
+    const returnHandledSeparately = isLastPoseDay && hasDepot && !!returnDayISO;
+    // siegeReturnSec : durée de retour au siège — seulement si on rentre vraiment CE soir (jamais sur le
+    // dernier jour de pose, dont le retour est reporté au jour de retour dédié).
+    const siegeReturnSec = (!staysOnSite && !returnHandledSeparately && hasDepot && lastStopId != null) ? legToDepot(lastStopId) : 0;
     dayPlans[iso] = { events, totalDriveSec, approachSec: (isFirstWorkedDay && !morningTravel[di] ? (chunk.legs[0] || 0) : (morningTravel[di]?.sec || 0)), eveningSec, eveningReturn, endMin, source, oversized, siegeReturnSec, staysOnSite, isLastPoseDay };
   }
 
@@ -4202,28 +4215,41 @@ ${sign}`,
                         );
                       })}
 
-                      <div style={{ borderTop: '1px solid var(--border)' }} />
-                      {days.map(d => {
+                      <div style={{ borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center', paddingRight: 6 }}>
+                        <span style={{ fontSize: 8, color: 'var(--ink-faint)', fontFamily: 'JetBrains Mono, monospace', textTransform: 'uppercase', letterSpacing: '0.03em', lineHeight: 1.4, textAlign: 'right' }}>fin<br />route</span>
+                      </div>
+                      {(() => { const hasReturnDay = Object.values(res.dayPlans || {}).some(p => p && p.returnOnly); return days.map(d => {
                         const plan = res.dayPlans[toISO(d)];
+                        // Décomposition du temps de route du jour, pour l'info-bulle (« route » agrège 3 postes
+                        // qu'on n'a pas la place d'afficher en clair : approche du matin, trajets entre
+                        // chantiers, et retour au siège le soir quand il a lieu ce jour-là).
+                        const routeTitle = plan && !plan.returnOnly ? ('Temps de route — ' + ([
+                          plan.approachSec ? `approche ${fmtDuration(plan.approachSec)}` : null,
+                          plan.totalDriveSec ? `entre chantiers ${fmtDuration(plan.totalDriveSec)}` : null,
+                          plan.siegeReturnSec ? `retour siège ${fmtDuration(plan.siegeReturnSec)}` : null,
+                        ].filter(Boolean).join(' · ') || 'aucun trajet')) : undefined;
                         return (
                           <div key={'f' + toISO(d)} className="p-1 text-center" style={{ borderLeft: '1px solid var(--border)', borderTop: '1px solid var(--border)' }}>
                             {plan
                               ? (plan.returnOnly
-                                  ? <span style={{ fontSize: 10, color: 'var(--ink-faint)', fontFamily: 'JetBrains Mono, monospace', lineHeight: 1.3 }}>
+                                  ? <span style={{ fontSize: 10, color: 'var(--ink-faint)', fontFamily: 'JetBrains Mono, monospace', lineHeight: 1.3 }} title="Retour au siège le lendemain de la dernière pose">
                                       retour dépôt<br />{fmtDuration(plan.approachSec)} route
                                     </span>
-                                  : <span style={{ fontSize: 10, color: plan.oversized ? 'var(--accent)' : 'var(--ink-faint)', fontFamily: 'JetBrains Mono, monospace', lineHeight: 1.3 }}>
+                                  : <span title={routeTitle} style={{ fontSize: 10, color: plan.oversized ? 'var(--accent)' : 'var(--ink-faint)', fontFamily: 'JetBrains Mono, monospace', lineHeight: 1.3, cursor: 'help' }}>
                                       fin {minToHHMM(plan.endMin)}{plan.oversized ? ' ⚠' : ''}<br />{fmtDuration((plan.approachSec || 0) + (plan.totalDriveSec || 0) + (plan.siegeReturnSec || 0))} route
                                       {!plan.isLastPoseDay && (plan.staysOnSite || plan.siegeReturnSec > 0) && (
                                         <><br /><span style={{ color: plan.staysOnSite ? 'var(--ink-faint)' : 'var(--teal-deep)' }}>
                                           {plan.staysOnSite ? '🛏 nuit sur place' : `↩ dont retour siège ${fmtDuration(plan.siegeReturnSec)}`}
                                         </span></>
                                       )}
+                                      {plan.isLastPoseDay && hasReturnDay && (
+                                        <><br /><span style={{ color: 'var(--teal-deep)' }}>↩ retour dépôt le lendemain</span></>
+                                      )}
                                     </span>)
                               : <span style={{ fontSize: 10, color: 'var(--ink-faint)' }}>—</span>}
                           </div>
                         );
-                      })}
+                      }); })()}
                     </div>
                   </div>
                 )}
