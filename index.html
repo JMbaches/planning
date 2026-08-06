@@ -5268,6 +5268,19 @@ function Parametres({ binomes, setBinomes, poseTypes, setPoseTypes, depot, setDe
       <section className="card p-6 mt-6" style={{ borderColor: '#C0392B' }}>
         <h2 className="font-display text-2xl font-semibold mb-1" style={{ color: '#C0392B' }}>Zone de danger</h2>
         <p className="text-sm mb-4" style={{ color: 'var(--ink-soft)' }}>
+          Supprime <strong>tous les chantiers</strong> ({chantiers.length}), y compris les archivés. Binômes, réglages et clés API sont conservés. <strong>Cette action est irréversible.</strong>
+        </p>
+        <button onClick={() => {
+          if (!chantiers.length) { showToast('Aucun chantier à supprimer'); return; }
+          if (!confirm(`⚠️ Supprimer tous les chantiers\n\n${chantiers.length} chantier(s) seront définitivement supprimés (y compris les archivés). Les binômes, réglages et clés API sont conservés.\n\nCette action est irréversible. Continuer ?`)) return;
+          if (!confirm('Dernière confirmation : supprimer tous les chantiers ?')) return;
+          setChantiers([]);
+          showToast('Tous les chantiers ont été supprimés');
+        }} className="mb-4" style={{ background: '#C0392B', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 20px', cursor: 'pointer', fontWeight: 600, fontSize: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <I.trash size={16} /> Supprimer tous les chantiers
+        </button>
+
+        <p className="text-sm mb-4" style={{ color: 'var(--ink-soft)' }}>
           Supprime <strong>toutes les données</strong> de l'application : chantiers, binômes, plannings enregistrés, réglages, clés API. L'application revient à l'état initial. <strong>Cette action est irréversible.</strong>
         </p>
         <button onClick={() => {
