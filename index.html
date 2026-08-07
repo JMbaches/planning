@@ -3631,9 +3631,13 @@ ${sign}`,
       const existingRes = schedules[binId];
       const currentPlan = existingRes?.dayPlans?.[iso] || null;
       // Chantiers déjà posés CE jour-là (dans leur ordre actuel), en excluant le déposé lui-même
-      // au cas où il s'agit d'un déplacement à l'intérieur du même jour.
+      // au cas où il s'agit d'un déplacement à l'intérieur du même jour. Un chantier à cheval sur
+      // la pause déjeuner produit DEUX events 'pose' (avant/après, le 2e marqué contd) — on
+      // déduplique par id, sinon il compte deux fois dans le calcul du jour.
+      const seenDayIds = new Set();
       const existingDayChantiers = (currentPlan?.events || [])
         .filter(e => e.type === 'pose' && e.chantier)
+        .filter(e => { if (seenDayIds.has(e.chantier.id)) return false; seenDayIds.add(e.chantier.id); return true; })
         .map(e => chantiers.find(c => c.id === e.chantier.id) || e.chantier)
         .filter(c => c.id !== updated.id);
       const dayMeta = {
@@ -3692,8 +3696,13 @@ ${sign}`,
     try {
       const existingRes = schedules[binId];
       const currentPlan = existingRes?.dayPlans?.[iso] || null;
+      // Un chantier à cheval sur la pause déjeuner produit DEUX events 'pose' (avant/après, le 2e
+      // marqué contd) pour le même chantier — on déduplique par id, sinon il se retrouve compté
+      // deux fois (durée + trajet doublés) dans le recalcul du jour.
+      const seenIds = new Set();
       const remaining = (currentPlan?.events || [])
         .filter(e => e.type === 'pose' && e.chantier && e.chantier.id !== chantierObj.id)
+        .filter(e => { if (seenIds.has(e.chantier.id)) return false; seenIds.add(e.chantier.id); return true; })
         .map(e => chantiers.find(c => c.id === e.chantier.id) || e.chantier);
 
       upsert({ ...chantierObj, scheduledDate: '', scheduledBinome: '', slot: '', manualDate: false, status: 'a_planifier' });
