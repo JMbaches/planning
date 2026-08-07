@@ -2693,7 +2693,7 @@ function FeuillesDeRoute({ chantiers, binomes, depot }) {
     }
   };
 
-  if (previewWeek) return <PrintSheetWeek weekStart={weekStart} weekData={weekData} onBack={() => setPreviewWeek(false)} />;
+  if (previewWeek) return <PrintSheetWeek weekStart={weekStart} weekData={weekData} chantiers={chantiers} depot={depot} weekDays={weekDays} onBack={() => setPreviewWeek(false)} />;
   if (preview) return <PrintSheet date={date} binome={bin} chantiers={list} driveInfo={optResult} onBack={() => setPreview(false)} />;
 
   return (
@@ -2833,7 +2833,7 @@ function FeuillesDeRoute({ chantiers, binomes, depot }) {
   );
 }
 
-function PrintSheetWeek({ weekStart, weekData, onBack }) {
+function PrintSheetWeek({ weekStart, weekData, chantiers, depot, weekDays, onBack }) {
   const weekLabel = `Semaine ${getISOWeek(weekStart)} · ${weekStart.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long' })} – ${addDays(weekStart, 4).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })}`;
   return (
     <div className="pt-10 fadein">
