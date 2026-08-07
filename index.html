@@ -1333,6 +1333,68 @@ async function planSingleDay(existingChantiers, newChantier, depot, workday, day
   return { error: 'no_fit' };
 }
 
+/* Retire un chantier d'un jour déjà planifié : recalcule les temps de route pour les chantiers
+   RESTANTS de ce jour (même ordre, sans réoptimiser), sans jamais aller chercher un remplaçant
+   dans le pool. Symétrique de planSingleDay mais sans newChantier à insérer. */
+async function planDayRemoveChantier(remainingChantiers, depot, workday, dayMeta = {}) {
+  if (!remainingChantiers.length) return { ok: true, empty: true };
+
+  const dayStart   = parseHHMM(workday?.start, 480);
+  const lunchStart = parseHHMM(workday?.lunchStart, 720);
+  const lunchDur   = workday?.lunchDuration ?? 60;
+  const hasDepot   = !!(depot && (depot.address || depot.city || depot.postalCode));
+  const SIEGE_SEUIL_SEC = 1.5 * 3600;
+  const RETOUR_MAX = 19 * 60;
+  const approachFromDepot = dayMeta.approachFromDepot !== false;
+  const fixedApproachSec = dayMeta.approachSec || 0;
+
+  const geo = await Promise.all(remainingChantiers.map(c => geocodeFr(c.address, c.postalCode, c.city).catch(() => null)));
+  if (geo.some(g => !g)) return { error: 'geocode' };
+
+  let depotGeo = null;
+  if (hasDepot) depotGeo = await geocodeFr(depot.address, depot.postalCode, depot.city).catch(() => null);
+
+  const points = [...(depotGeo ? [depotGeo] : []), ...geo];
+  let matrix = null;
+  try { const dm = await durationMatrix(points); matrix = dm.matrix; } catch (e) { matrix = null; }
+  const off = depotGeo ? 1 : 0;
+  const cell = (i, j) => {
+    if (!matrix) return 20 * 60;
+    const v = matrix[i] && matrix[i][j];
+    return (typeof v === 'number' && isFinite(v)) ? v : 20 * 60;
+  };
+  const legFromDepot = (i) => depotGeo ? cell(0, off + i) : 0;
+  const legToDepot   = (i) => depotGeo ? cell(off + i, 0) : 0;
+  const legBetween   = (i, j) => cell(off + i, off + j);
+  const durMin = (c) => (c.estimatedDuration || 0) * 60;
+
+  let t = dayStart;
+  const events = [];
+  const aSec = approachFromDepot ? legFromDepot(0) : fixedApproachSec;
+  let driveSec = aSec;
+  if (aSec > 0) { events.push({ type: 'travelApproach', start: t, end: t + aSec / 60, fromDepot: approachFromDepot }); t += aSec / 60; }
+  for (let k = 0; k < remainingChantiers.length; k++) {
+    if (k > 0) {
+      const legSec = legBetween(k - 1, k);
+      driveSec += legSec;
+      const legMin = legSec / 60;
+      events.push({ type: 'travel', start: t, end: t + legMin }); t += legMin;
+    }
+    const ch = remainingChantiers[k];
+    const d = durMin(ch);
+    events.push({ type: 'pose', start: t, end: t + d, chantier: ch });
+    t += d;
+  }
+  const withLunch = injectLunch(events, lunchStart, lunchDur);
+  const lastPose = [...withLunch].reverse().find(e => e.type === 'pose');
+  const endMin = lastPose ? lastPose.end : t;
+  const lastIdx = remainingChantiers.length - 1;
+  const siegeReturnSec = dayMeta.isLastPoseDay ? 0 : (depotGeo ? legToDepot(lastIdx) : 0);
+  const staysOnSite = !dayMeta.isLastPoseDay
+    && ((endMin + siegeReturnSec / 60) > RETOUR_MAX || siegeReturnSec > SIEGE_SEUIL_SEC || !!dayMeta.staysOnSite);
+  return { ok: true, events: withLunch, endMin, totalDriveSec: driveSec, siegeReturnSec, staysOnSite };
+}
+
 /* =========================================================================
    AFFECTATION AUTO PAR ZONE — k-means géographique (1 cluster par binôme)
    ========================================================================= */
@@ -2024,6 +2086,12 @@ function ChantierCard({ c, binomes, onEdit, onFeedback, onArchive, onToggleValid
       </div>
       <div className="space-y-1 text-xs mb-4" style={{ color: 'var(--ink-soft)' }}>
         <div className="flex items-center gap-2"><I.mapPin size={12} />{c.address}, {c.postalCode} {c.city}</div>
+        {(!c.postalCode || !c.city) && (
+          <div className="flex items-center gap-2 font-medium" style={{ color: '#9A3B12' }}>
+            <I.alert size={12} />
+            {!c.postalCode && !c.city ? 'Code postal et ville manquants' : !c.postalCode ? 'Code postal manquant' : 'Ville manquante'} — le chantier ne pourra pas être géolocalisé pour le planning.
+          </div>
+        )}
         {c.dimensions && <div className="flex items-center gap-2"><I.ruler size={12} />{c.dimensions}</div>}
         <div className="flex items-center gap-2"><I.clock size={12} />{c.estimatedDuration}h estimées</div>
         {(c.notBefore || c.notAfter) && (
@@ -2233,6 +2301,12 @@ function ChantierForm({ existing, binomes, poseTypes, apiKey, onSave, onCancel, 
               <Field label="Code postal"><input value={data.postalCode} onChange={e => set('postalCode', e.target.value)} /></Field>
               <div className="col-span-2"><Field label="Ville"><input value={data.city} onChange={e => set('city', e.target.value)} /></Field></div>
             </div>
+            {(!data.postalCode || !data.city) && (
+              <div className="text-xs p-2 rounded flex items-center gap-1" style={{ background: '#FBE4DC', color: '#9A3B12' }}>
+                <I.alert size={12} />
+                {!data.postalCode && !data.city ? 'Code postal et ville manquants' : !data.postalCode ? 'Code postal manquant' : 'Ville manquante'} — le chantier ne pourra pas être géolocalisé pour le planning.
+              </div>
+            )}
           </div>
         </section>
 
@@ -3608,6 +3682,65 @@ ${sign}`,
     setDropProposal(null);
   };
 
+  // Retire un chantier déjà planifié de son jour : il repasse "à planifier" (rien ne le remplace),
+  // et les temps de trajet du jour sont recalculés pour les chantiers qui restent — jamais les
+  // autres jours de la semaine (même logique de portée que dropOnDay).
+  const removeFromDay = async (chantierObj, binId, iso) => {
+    if (!chantierObj || !binId || !iso) return;
+    if (!window.confirm(`Retirer "${chantierObj.clientName}" du planning de ce jour ?\n\nIl repasse en "à planifier" — aucun autre chantier ne prendra sa place. Les temps de trajet du jour sont recalculés.`)) return;
+    setComputing(true); setProgress('Recalcul du jour…');
+    try {
+      const existingRes = schedules[binId];
+      const currentPlan = existingRes?.dayPlans?.[iso] || null;
+      const remaining = (currentPlan?.events || [])
+        .filter(e => e.type === 'pose' && e.chantier && e.chantier.id !== chantierObj.id)
+        .map(e => chantiers.find(c => c.id === e.chantier.id) || e.chantier);
+
+      upsert({ ...chantierObj, scheduledDate: '', scheduledBinome: '', slot: '', manualDate: false, status: 'a_planifier' });
+
+      if (!remaining.length) {
+        setSchedules(prev => {
+          const prevRes = prev[binId];
+          if (!prevRes) return prev;
+          const dayPlans = { ...prevRes.dayPlans };
+          delete dayPlans[iso];
+          const assignments = prevRes.assignments.filter(a => a.id !== chantierObj.id);
+          return { ...prev, [binId]: { ...prevRes, dayPlans, assignments } };
+        });
+        showToast('Chantier retiré du planning');
+        return;
+      }
+
+      const dayMeta = {
+        approachSec: currentPlan?.approachSec || 0,
+        approachFromDepot: currentPlan ? !!(currentPlan.events || []).find(e => e.type === 'travelApproach')?.fromDepot : true,
+        isLastPoseDay: currentPlan?.isLastPoseDay ?? true,
+        staysOnSite: currentPlan?.staysOnSite || false,
+      };
+      const result = await planDayRemoveChantier(remaining, depot, workday, dayMeta);
+      if (!result.ok) { showToast('Chantier retiré (trajets non recalculés — géocodage indisponible)'); return; }
+      setSchedules(prev => {
+        const prevRes = prev[binId];
+        if (!prevRes) return prev;
+        const dayPlans = { ...prevRes.dayPlans, [iso]: {
+          events: result.events, endMin: result.endMin, totalDriveSec: result.totalDriveSec,
+          approachSec: currentPlan?.approachSec ?? 0, eveningSec: currentPlan?.eveningSec, eveningReturn: currentPlan?.eveningReturn,
+          source: currentPlan?.source || 'osrm', oversized: false,
+          siegeReturnSec: result.siegeReturnSec, staysOnSite: result.staysOnSite,
+          isLastPoseDay: currentPlan?.isLastPoseDay ?? true,
+        } };
+        const assignments = prevRes.assignments.filter(a => a.id !== chantierObj.id);
+        return { ...prev, [binId]: { ...prevRes, dayPlans, assignments } };
+      });
+      showToast('Chantier retiré, trajets du jour recalculés');
+    } catch (e) {
+      console.error('[removeFromDay] erreur:', e);
+      showToast("Erreur pendant le retrait du chantier");
+    } finally {
+      setComputing(false); setProgress('');
+    }
+  };
+
   const exportPDF = () => {
     const { jsPDF } = window.jspdf;
     if (!usedPools || !usedPools.length) { showToast('Aucun planning à exporter'); return; }
@@ -4217,6 +4350,13 @@ ${sign}`,
                                 title={`${minToHHMM(ev.start)}–${minToHHMM(ev.end)} · ${c.clientName} · ${c.type} · ${c.estimatedDuration}h${ev.fixed ? ' · heure fixée' : ''}${adrTip ? '\n📍 ' + adrTip : ''}${tel ? '\n☎ ' + tel : ''}\n— Cliquer pour ouvrir la fiche`}
                                 onClick={() => { if (setPendingEdit && setTab) { setPendingEdit(fullC); setTab('chantiers'); } }}
                                 style={{ position: 'absolute', top, left: 2, right: 2, height: h, background: dc.bg, color: dc.ink, borderRadius: 3, borderLeft: `4px solid ${bin.color}`, padding: '3px 5px 3px 6px', overflow: 'hidden', boxShadow: 'var(--shadow-sm)', outline: ev.fixed ? '2px solid var(--accent)' : 'none', outlineOffset: ev.fixed ? '-2px' : 0, cursor: 'pointer' }}>
+                                {!ev.contd && (
+                                  <button
+                                    onClick={e => { e.stopPropagation(); removeFromDay(fullC, bin.id, toISO(d)); }}
+                                    title="Retirer du planning de ce jour (repasse à planifier, rien ne le remplace)"
+                                    style={{ position: 'absolute', top: 2, right: 2, width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, lineHeight: 1, fontSize: 10, background: 'rgba(255,255,255,0.55)', border: 'none', borderRadius: 3, color: dc.ink, cursor: 'pointer', zIndex: 1 }}
+                                  >✕</button>
+                                )}
                                 <div style={{ fontSize: 10, fontWeight: 700, lineHeight: 1.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.fixed ? '📌 ' : ''}{minToHHMM(ev.start)} {c.clientName}{ev.contd ? ' (suite)' : ''}</div>
                                 {rue && <div style={{ fontSize: 9, opacity: 0.9, lineHeight: 1.15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{rue}</div>}
                                 {cpVille && <div style={{ fontSize: 9, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{cpVille}</div>}
