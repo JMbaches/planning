@@ -189,7 +189,11 @@ const STATUTS = {
   fait:        { label: 'Terminé',     color: '#2D5A3D', bg: '#DFEEDF' },
   reporte:     { label: 'Reporté',     color: '#5A5A5A', bg: '#ECECEC' },
   valide:      { label: 'Validé client', color: '#1E6B3A', bg: '#D7F0DE' },
+  annule:      { label: 'Annulé',       color: '#9B2C2C', bg: '#FBE4DC' },
 };
+// Un chantier annulé ne se fera pas : il sort de TOUTES les optimisations et n'est jamais
+// reproposé. C'est réversible — il suffit de lui redonner un statut depuis sa fiche.
+const isAnnule = (c) => c.status === 'annule';
 
 // Plafond horaire de fin de journée de pose, en minutes depuis minuit.
 // On peut aller jusqu'à 18h30 max (auparavant 18h00). Source unique : toute la
@@ -3406,6 +3410,28 @@ function EmploiDuTemps({ chantiers, binomes, depot, workday, unavail, upsert, sh
     })).filter(g => g.list.length);
   }, [chantiers, binomes, weekStart]);
 
+  // Le client refuse le créneau proposé. Le chantier sort de la semaine ET ne doit pas pouvoir y
+  // revenir : on vide date et binôme (il retourne dans le lot à planifier) et on pose notBefore au
+  // lundi SUIVANT. dateAllowed() interdit alors tout jour de cette semaine, y compris lors d'une
+  // réoptimisation. Sans ce notBefore l'algo le reproposerait aussitôt au même endroit — c'est
+  // exactement ce que fait la croix « Retirer du planning », qui ne fait qu'effacer la date.
+  // manualDate et fixedTime sont vidés aussi, sinon isLockedChantier le garderait épinglé.
+  const refuserCreneau = (c) => {
+    const lundiSuivant = toISO(addDays(weekStart, 7));
+    upsert({ ...c, status: 'a_planifier', scheduledDate: '', scheduledBinome: '', fixedTime: '', manualDate: '', notBefore: lundiSuivant });
+    showToast && showToast(`${c.clientName} — créneau refusé, replanifiable à partir du ${fmtDate(lundiSuivant)}`);
+  };
+
+  // Le chantier ne se fera pas du tout. Confirmation demandée : contrairement au refus de créneau,
+  // ça le sort du planning pour de bon (mais reste réversible depuis sa fiche).
+  const annulerChantier = (c) => {
+    if (!window.confirm(`Annuler le chantier de ${c.clientName} ?
+
+Il sortira du planning et ne sera plus proposé à l'optimisation. Tu pourras le réactiver depuis sa fiche.`)) return;
+    upsert({ ...c, status: 'annule', scheduledDate: '', scheduledBinome: '', fixedTime: '', manualDate: '' });
+    showToast && showToast(`${c.clientName} — chantier annulé`);
+  };
+
   const toggleValidate = (c) => {
     if (c.status === 'valide') { upsert({ ...c, status: 'planifie' }); showToast && showToast('Chantier dévalidé'); }
     else if (c.scheduledDate && c.scheduledBinome) { upsert({ ...c, status: 'valide', slot: c.slot || 'am' }); showToast && showToast('Chantier validé (verrouillé)'); }
@@ -3521,7 +3547,7 @@ ${sign}`,
 
   // Pool optimisable : tout sauf les chantiers terminés, VALIDÉS (verrouillés) ou EN ATTENTE, et sauf figés ailleurs.
   const optimizable = useMemo(() =>
-    chantiers.filter(c => !(c.status === 'fait' || c.status === 'valide' || c.status === 'en_attente') && (forceAll || !isFrozenElsewhere(c))),
+    chantiers.filter(c => !(c.status === 'fait' || c.status === 'valide' || c.status === 'en_attente' || isAnnule(c)) && (forceAll || !isFrozenElsewhere(c))),
     [chantiers, weekStart, forceAll]);
 
   const manualPools = useMemo(() => binomes.map(b => ({ bin: b, pool: optimizable.filter(c => c.scheduledBinome === b.id) })), [binomes, optimizable]);
@@ -3581,7 +3607,7 @@ ${sign}`,
     // planWeek les place sur leur jour + binôme et remplit le reste autour — plus de calcul isolé/caché.
     // Un validé d'une AUTRE semaine reste exclu (il appartient à sa propre semaine).
     const pool = chantiers.filter(c => {
-      if (c.status === 'fait' || c.status === 'en_attente') return false;
+      if (c.status === 'fait' || c.status === 'en_attente' || isAnnule(c)) return false;
       if (c.status === 'valide') return weekISO.includes(c.scheduledDate) && interv1Planned(c);
       return (force || !isFrozenElsewhere(c)) && interv1Planned(c);
     });
@@ -4539,7 +4565,9 @@ ${sign}`,
           <div className="mb-4">
             <h2 className="font-display text-2xl font-semibold mb-1">Chantiers de la semaine</h2>
             <p className="text-sm" style={{ color: 'var(--ink-soft)' }}>
-              Après avoir contacté le client, valide le chantier d'un clic : il sera verrouillé et l'optimisation ne le déplacera plus.
+              Après avoir contacté le client : <strong>Valider</strong> verrouille le chantier, l'optimisation ne le déplacera plus.
+              <strong> Refusé</strong> le sort de la semaine sans qu'il puisse y revenir — il repart à partir du lundi suivant.
+              <strong> Annulé</strong> le retire du planning pour de bon.
             </p>
           </div>
           <div className="space-y-5">
@@ -4589,6 +4617,18 @@ ${sign}`,
                               ? { background: 'transparent', border: '1px solid var(--border)', color: 'var(--ink-soft)', cursor: 'pointer' }
                               : { background: STATUTS.valide.color, border: 'none', color: '#fff', cursor: 'pointer' }}>
                             {isValide ? <><I.unlock size={13} /> Dévalider</> : <><I.check size={13} /> Valider</>}
+                          </button>
+                          <button onClick={() => refuserCreneau(c)}
+                            title="Le client refuse ce créneau : le chantier quitte la semaine et ne pourra pas y revenir. Il sera replanifié à partir du lundi suivant."
+                            className="text-xs font-medium flex items-center gap-1 px-3 py-1.5 rounded"
+                            style={{ background: 'transparent', border: '1px solid ' + STATUTS.reporte.color, color: STATUTS.reporte.color, cursor: 'pointer' }}>
+                            <I.arrowR size={13} /> Refusé
+                          </button>
+                          <button onClick={() => annulerChantier(c)}
+                            title="Le chantier ne se fera pas : il sort du planning et n'est plus proposé à l'optimisation. Réversible depuis sa fiche."
+                            className="text-xs font-medium flex items-center gap-1 px-3 py-1.5 rounded"
+                            style={{ background: 'transparent', border: '1px solid ' + STATUTS.annule.color, color: STATUTS.annule.color, cursor: 'pointer' }}>
+                            <I.x size={13} /> Annulé
                           </button>
                         </div>
                       </div>
