@@ -57,7 +57,7 @@ Déclencher un déploiement immédiat sans attendre :
 
 ## Étape 3 — Vérifier
 
-    Get-Content C:\wamp\www\planning\_deploiement.log -Tail 10
+    Get-Content C:\inetpub\wwwroot\planning\_deploiement.log -Tail 10
 
 Le journal ne consigne que ce qui compte : créations, mises à jour effectives et échecs. Les
 passages sans changement n'écrivent rien.
@@ -66,24 +66,48 @@ Le script refuse de remplacer un fichier valide par une réponse tronquée ou un
 réseau : en cas d'échec, la version déjà en place reste servie (testé sur réponse trop
 courte et sur 404).
 
-### Le serveur web est Apache (WAMP), pas IIS
+### ⚠️ Deux serveurs web sur cette VM — ne pas se tromper de port
 
-Relevé sur la VM le 2026-09-05 :
+Relevé le 2026-09-05, après trois tentatives de déploiement infructueuses :
 
-    ServerRoot    "c:/wamp/bin/apache/apache2.4.18"
-    DocumentRoot  "c:/wamp/www"
+| Port | Serveur | Racine | Rôle |
+|------|---------|--------|------|
+| 80   | Apache 2.4.18 / PHP 5.6 (WAMP) | `c:/wamp/www` | **sans rapport** avec l'app de gestion |
+| 8080 | IIS | `C:\inetpub\wwwroot` | sert l'app de gestion et relaie `/api` vers l'API Node du port 3000 |
 
-⚠️ **Le runbook et le `web.config` du dépôt de l'app de gestion décrivent une installation IIS
-qui ne correspond plus à la machine.** Un dossier `C:\inetpub\wwwroot` subsiste, vestige d'IIS,
-mais Apache ne le sert pas : y déposer un fichier ne le rend accessible nulle part. C'est
-exactement ce qui a fait échouer la première tentative de déploiement, avec un 403 d'Apache.
+**C'est le port 8080 qu'il faut viser**, donc `C:\inetpub\wwwroot\planning`. L'app est servie
+sur `http://<adresse-de-la-VM>:8080/planning/`.
 
-`/planning/` est donc servi par Apache comme un simple fichier statique, depuis
-`C:\wamp\www\planning`.
+C'est indispensable et pas seulement pratique : l'app de planning doit être sur la **même
+origine** que l'app de gestion pour réutiliser sa session et appeler `/api` sans modifier
+quoi que ce soit côté API. Sur le port 80 elle serait sur une autre origine, donc coupée des
+deux.
 
-À vérifier avant l'étape suivante : **par quel mécanisme `/api/` atteint l'API Node du port
-3000.** Si c'est Apache qui relaie (`ProxyPass` dans sa configuration), c'est là qu'il faut
-regarder, et non dans le `web.config` d'IIS qui n'est probablement plus utilisé.
+Le port 80 est ce qui a fait perdre le plus de temps : tester `http://<vm>/planning/` interroge
+Apache, qui répond `403 Forbidden` — un serveur qui n'a rien à voir avec l'affaire. Le runbook
+et le `web.config` du dépôt de l'app de gestion décrivaient bien IIS : ils avaient raison, mais
+ils ne mentionnent pas le port, ni l'existence du second serveur.
+
+### Le piège des droits sur le fichier déposé
+
+Sous Windows, **déplacer** un fichier conserve les droits de sa source, alors que le **copier**
+lui fait hériter de ceux du dossier de destination. Un fichier arrivé depuis `%TEMP%` par un
+déplacement est donc illisible par le compte d'IIS, qui répond `401` — même si le dossier qui
+le contient a, lui, les bons droits.
+
+Le symptôme est trompeur : le dossier paraît correct, seul le fichier est en cause. Pour
+comparer, un fichier qui fonctionne porte `IIS_IUSRS:(I)(RX)` et tout est marqué `(I)`, hérité.
+
+    icacls C:\inetpub\wwwroot\index.html            # celui-ci fonctionne
+    icacls C:\inetpub\wwwroot\planning\index.html   # comparer avec
+
+Réparation manuelle si besoin :
+
+    icacls C:\inetpub\wwwroot\planning\index.html /reset
+
+Le script le fait désormais tout seul à chaque passage, indépendamment du contenu — ce point
+compte : le contenu peut être le bon et les droits mauvais, et une comparaison de contenu seule
+ne détecte jamais ce cas.
 
 ⚠️ Ne pas confondre avec l'app planning **embarquée** dans l'app de gestion (onglet Planning,
 iframe) : c'est une copie distincte et plus ancienne, dans un autre dépôt. Voir `CLAUDE.md`.
