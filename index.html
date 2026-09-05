@@ -217,6 +217,28 @@ async function ecrireEnBase(cle) {
   Partage.versions[cle] = nouvelle;
 }
 
+/* Petit repère « qui est connecté » + déconnexion. Hors de React comme le reste du dispositif
+   de partage, pour ne pas avoir à toucher aux composants de l'app. Indispensable sur un poste
+   partagé : sans lui, la session de la personne précédente reste ouverte sans que ça se voie. */
+function badgeUtilisateur(user) {
+  const d = document.createElement('div');
+  d.className = 'no-print';
+  d.style.cssText = 'position:fixed;bottom:10px;left:12px;z-index:900;display:flex;align-items:center;gap:8px;'
+    + 'background:var(--paper);border:1px solid var(--border);border-radius:20px;padding:5px 6px 5px 12px;'
+    + 'font-size:11px;color:var(--ink-faint);box-shadow:var(--shadow-sm);opacity:.75';
+  d.onmouseenter = () => d.style.opacity = '1';
+  d.onmouseleave = () => d.style.opacity = '.75';
+  const qui = document.createElement('span');
+  qui.textContent = user.email || 'connecté';
+  const b = document.createElement('button');
+  b.textContent = 'Déconnexion';
+  b.style.cssText = 'border:none;background:var(--bg);color:var(--ink-soft);border-radius:14px;'
+    + 'padding:4px 10px;font-size:11px;cursor:pointer';
+  b.onclick = async () => { try { await firebase.auth().signOut(); } catch (e) {} location.reload(); };
+  d.appendChild(qui); d.appendChild(b);
+  document.body.appendChild(d);
+}
+
 /* Bandeau volontairement hors de React : il doit pouvoir s'afficher quel que soit l'état de
    l'app, y compris si le rendu est en cours. Une fois gelé, plus aucune écriture ne part —
    mieux vaut perdre les dernières minutes de saisie que le travail de quelqu'un d'autre. */
@@ -5787,6 +5809,66 @@ function attendreUtilisateur() {
   });
 }
 
+/* Écran de connexion. Mêmes identifiants que l'app de gestion — c'est le même projet Firebase,
+   les mêmes comptes — et mêmes messages d'erreur, repris de son doLogin() pour que les deux
+   apps se comportent pareil devant une erreur de saisie.
+   Servi en DOM brut : il s'affiche avant que React ne soit monté, puisqu'il conditionne
+   justement le chargement des données. */
+function ecranConnexion(racine) {
+  const MESSAGES = {
+    'auth/user-not-found':    'Aucun compte trouvé pour cette adresse email',
+    'auth/wrong-password':    'Mot de passe incorrect',
+    'auth/invalid-email':     'Adresse email invalide',
+    'auth/user-disabled':     'Ce compte a été désactivé',
+    'auth/too-many-requests': 'Trop de tentatives — réessaie dans quelques minutes',
+    'auth/invalid-credential': 'Email ou mot de passe incorrect',
+    'auth/network-request-failed': 'Pas de réseau — vérifie la connexion de ce poste',
+  };
+  racine.innerHTML =
+      '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px">'
+    +   '<div class="card" style="width:380px;padding:36px">'
+    +     '<div class="font-display" style="font-size:24px;margin-bottom:4px">Planning</div>'
+    +     '<div style="font-size:13px;color:var(--ink-soft);margin-bottom:26px">Connecte-toi avec ton compte JM Bâches.</div>'
+    +     '<div style="display:flex;flex-direction:column;gap:14px">'
+    +       '<div><div class="label-cap" style="margin-bottom:6px">Adresse email</div>'
+    +         '<input type="email" id="jmb-email" autocomplete="username" placeholder="prenom.nom@jmbaches.fr"></div>'
+    +       '<div><div class="label-cap" style="margin-bottom:6px">Mot de passe</div>'
+    +         '<input type="password" id="jmb-pwd" autocomplete="current-password" placeholder="••••••••"></div>'
+    +       '<button id="jmb-go" class="btn-primary" style="width:100%;justify-content:center">Se connecter</button>'
+    +     '</div>'
+    +     '<div id="jmb-err" style="color:var(--accent);font-size:12px;margin-top:12px;min-height:16px;text-align:center"></div>'
+    +   '</div>'
+    + '</div>';
+
+  const email = document.getElementById('jmb-email');
+  const pwd   = document.getElementById('jmb-pwd');
+  const btn   = document.getElementById('jmb-go');
+  const err   = document.getElementById('jmb-err');
+  email.focus();
+
+  return new Promise(resolve => {
+    const tenter = async () => {
+      const e = email.value.trim().toLowerCase();
+      const p = pwd.value;
+      if (!e) { err.textContent = 'Entre ton adresse email'; email.focus(); return; }
+      if (!p) { err.textContent = 'Entre ton mot de passe'; pwd.focus(); return; }
+      err.textContent = '';
+      btn.disabled = true; btn.textContent = 'Connexion…';
+      try {
+        const cred = await firebase.auth().signInWithEmailAndPassword(e, p);
+        resolve(cred.user);
+      } catch (ex) {
+        err.textContent = MESSAGES[ex.code] || ('Erreur : ' + ex.message);
+        btn.disabled = false; btn.textContent = 'Se connecter';
+        pwd.select();
+      }
+    };
+    btn.onclick = tenter;
+    email.onkeydown = (ev) => { if (ev.key === 'Enter') pwd.focus(); };
+    pwd.onkeydown   = (ev) => { if (ev.key === 'Enter') tenter(); };
+  });
+}
+
 (async () => {
   const racine = document.getElementById('root');
   const ecran = (titre, detail) => {
@@ -5813,13 +5895,11 @@ function attendreUtilisateur() {
     await chargerScript('https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js');
     firebase.initializeApp(config);
 
-    const user = await attendreUtilisateur();
-    if (!user) {
-      ecran('Connexion requise',
-        'Ouvre l\'app de gestion, connecte-toi, puis reviens sur cette page.<br><br>'
-        + '<a href="/" style="color:var(--accent);font-weight:600">Aller à l\'app de gestion</a>');
-      return;
-    }
+    // Session déjà ouverte dans ce navigateur (app de gestion sur la même origine) : on
+    // enchaîne directement. Sinon on demande les identifiants sur place, plutôt que de
+    // renvoyer la personne ouvrir l'autre app d'abord.
+    let user = await attendreUtilisateur();
+    if (!user) user = await ecranConnexion(racine);
     Partage.user = user;
 
     ecran('Chargement du planning…', 'Récupération des données partagées.');
@@ -5838,6 +5918,7 @@ function attendreUtilisateur() {
   }
 
   ReactDOM.createRoot(racine).render(<App />);
+  badgeUtilisateur(Partage.user);
 })();
 </script>
 </body>
