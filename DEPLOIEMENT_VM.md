@@ -40,7 +40,7 @@ Premier lancement à la main, en PowerShell **administrateur** :
     powershell -NoProfile -ExecutionPolicy Bypass -File C:\Scripts\deploy-planning.ps1
 
 Attendu : une ligne « Mise a jour deployee : ~396000 octets ». L'app est alors servie sur
-**`https://<adresse-de-la-VM>/planning/`**.
+**`http://<adresse-de-la-VM>:8080/planning/`** — attention au port, voir l'avertissement plus bas.
 
 ## Étape 2 — Automatiser
 
