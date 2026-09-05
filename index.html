@@ -290,6 +290,10 @@ const toISO = (d) => { const x = (d instanceof Date) ? d : new Date(d); const y 
 // jour-là. Ne JAMAIS remettre une longueur fixe ici : c'est ce qui faisait disparaître, sans le
 // moindre message, un chantier du samedi de la feuille de route imprimée remise à l'équipe.
 const WEEK_DISPLAY_DAYS = 5;
+// Jours de POSE d'une semaine : lundi→jeudi. Le vendredi est réservé au retour dépôt. Valeur
+// reprise de planWeek (POSE_DAYS), sortie ici pour que les vues qui ont besoin de « les jours où
+// l'on pose » ne la redupliquent pas en 4 ou en [0,1,2,3] écrits à la main.
+const POSE_DAYS_PER_WEEK = 4;
 const weekSpanDays = (weekStart, chantiers) => {
   for (let i = 6; i >= WEEK_DISPLAY_DAYS; i--) {
     const iso = toISO(addDays(weekStart, i));
@@ -3654,6 +3658,55 @@ ${sign}`,
     }
   };
 
+  // Chantiers DÉJÀ planifiés sur la semaine affichée, chez un binôme. C'est le lot exact de
+  // « Recalculer les trajets » — il ne sort jamais de là.
+  const dejaDansLaSemaine = useMemo(() => {
+    const weekISO = days.slice(0, POSE_DAYS_PER_WEEK).map(d => toISO(d));
+    return chantiers.filter(c => weekISO.includes(c.scheduledDate) && c.scheduledBinome
+      && c.status !== 'fait' && c.status !== 'en_attente' && !isAnnule(c));
+  }, [chantiers, days]);
+
+  // Recalcule l'ordre des arrêts et les temps de trajet SANS toucher à la composition de la
+  // semaine : le lot est exactement dejaDansLaSemaine, chacun chez son binôme actuel. Aucun
+  // chantier n'entre, aucun ne change d'équipe.
+  // C'est la différence avec « Optimiser la semaine », qui repart du lot COMPLET des chantiers à
+  // planifier : après avoir retiré de la semaine les clients qui ont refusé, celui-ci les
+  // reproposait aussitôt, ou en faisait entrer de nouveaux, alors que la semaine était calée.
+  // Les chantiers peuvent encore changer de JOUR à l'intérieur de la semaine (c'est le but : on
+  // recalcule la tournée), sauf ceux verrouillés — validés, date manuelle, heure imposée.
+  const recalculerTrajets = async () => {
+    setComputing(true); setError(null); setApplied(false); setForceAll(false);
+    try {
+      const pool = dejaDansLaSemaine;
+      if (!pool.length) {
+        setError('Aucun chantier planifié sur cette semaine — utilise « Optimiser la semaine » pour la remplir.');
+        return;
+      }
+      const weekISO = days.slice(0, POSE_DAYS_PER_WEEK).map(d => toISO(d));
+      const closures = (sGet(SK.settings, {}).unavail || []).filter(u => u.scope === 'all').map(u => u.from).filter(Boolean);
+      const pools = binomes.map(b => ({ bin: b, pool: pool.filter(c => c.scheduledBinome === b.id) }));
+      const next = {};
+      for (const { bin, pool: bp } of pools) {
+        if (!bp.length) continue;
+        setProgress(bin.name);
+        const poseDaysISO = weekISO.filter(iso => !isUnavailable(unavail, bin.id, iso));
+        // Mêmes ancres que l'optimisation normale : les chantiers validés tiennent leur jour.
+        const anchors = [];
+        for (const c of bp.filter(x => x.status === 'valide')) {
+          try { const g = await geocodeFr(c.address, c.postalCode, c.city); if (g) anchors.push({ date: c.scheduledDate, lat: g.lat, lon: g.lon }); } catch (e) {}
+        }
+        next[bin.id] = await planWeek(bp, depot, workday, days, poseDaysISO, closures, anchors);
+      }
+      setSchedules(next);
+      setUsedPools(pools);
+      showToast && showToast(`Trajets recalculés sur ${pool.length} chantier${pool.length > 1 ? 's' : ''} — aucun ajout`);
+    } catch (e) {
+      console.error(e); setError(e.message || 'Erreur pendant le recalcul des trajets.');
+    } finally {
+      setComputing(false); setProgress('');
+    }
+  };
+
   const applyToPlanning = () => {
     // 1) date attribuée à chaque chantier planifié cette semaine
     const newDates = {}; // id → iso
@@ -4231,6 +4284,12 @@ ${sign}`,
           <button onClick={() => compute(false)} disabled={computing || !hasAny} className="btn-accent">
             {computing ? <><span className="spin"><I.loader size={16} /></span> Optimisation... {progress}</> : <><I.sparkles size={16} /> Optimiser la semaine</>}
           </button>
+          {dejaDansLaSemaine.length > 0 && (
+            <button onClick={recalculerTrajets} disabled={computing} className="btn-secondary"
+              title="Recalcule l'ordre des arrêts et les temps de trajet entre les chantiers DÉJÀ posés sur cette semaine. N'en ajoute aucun et ne change aucune équipe — à utiliser quand la semaine est calée et que tu viens d'en retirer des clients.">
+              <I.mapPin size={14} /> Recalculer les trajets ({dejaDansLaSemaine.length})
+            </button>
+          )}
           {frozenCount > 0 && (
             <button onClick={() => compute(true)} disabled={computing} className="btn-secondary" title="Réoptimise TOUS les chantiers, y compris ceux déjà planifiés sur d'autres semaines — ils peuvent être redéplacés.">
               <I.sparkles size={14} /> Tout réoptimiser
