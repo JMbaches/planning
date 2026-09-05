@@ -26,11 +26,41 @@ param(
     # http://<vm>:8080/planning/
     [string] $Destination = 'C:\inetpub\wwwroot\planning',
     [string] $Journal     = '',
+    # Fichier de l'app de gestion d'ou est relue la configuration Firebase (voir plus bas).
+    [string] $SourceConfig = 'C:\inetpub\wwwroot\postgres-layer.js',
     [int]    $TailleMini  = 100000   # garde-fou : l'app fait ~390 Ko, en dessous c'est une reponse tronquee
 )
 
 $ErrorActionPreference = 'Stop'
 if (-not $Journal) { $Journal = Join-Path $Destination '_deploiement.log' }
+
+function Ecrire-ConfigFirebase {
+    $cfg = Join-Path $Destination 'firebase-config.js'
+    if (-not (Test-Path $SourceConfig)) {
+        Ecrire-Journal "postgres-layer.js introuvable ($SourceConfig) : l'app restera en mode local."
+        return
+    }
+    try {
+        $src = Get-Content $SourceConfig -Raw
+        if ($src -notmatch '(?s)const\s+firebaseConfig\s*=\s*(\{.*?\})\s*;') {
+            Ecrire-Journal "Bloc firebaseConfig introuvable dans postgres-layer.js : mode local."
+            return
+        }
+        $contenu = "// Genere automatiquement par deploy-planning.ps1 depuis postgres-layer.js." + [Environment]::NewLine `
+                 + "// Ne pas modifier a la main, ne pas committer : ce fichier n'existe que sur la VM." + [Environment]::NewLine `
+                 + "window.JMB_FIREBASE_CONFIG = " + $Matches[1] + ";" + [Environment]::NewLine
+        # Comparaison sur contenu ajuste : Set-Content ajoute un saut de ligne final, donc une
+        # egalite stricte serait toujours fausse et le fichier serait reecrit -- et journalise --
+        # a chaque passage de la tache planifiee, noyant le journal.
+        $ancien = if (Test-Path $cfg) { (Get-Content $cfg -Raw) } else { '' }
+        if ($ancien.Trim() -ne $contenu.Trim()) {
+            Set-Content -Path $cfg -Value $contenu -Encoding utf8
+            Ecrire-Journal 'firebase-config.js genere (mode partage actif).'
+        }
+    } catch {
+        Ecrire-Journal "Generation de firebase-config.js impossible : $($_.Exception.Message)"
+    }
+}
 
 function Ecrire-Journal([string] $Message) {
     $ligne = '{0}  {1}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Message
@@ -90,6 +120,14 @@ try {
             }
         }
     }
+
+    # ---- Configuration Firebase, generee depuis l'app de gestion ----------------------------
+    # L'app de planning n'entre en mode partage (donnees en base) que si ce fichier existe a
+    # cote d'index.html. On le FABRIQUE ici, en relisant la configuration de l'app de gestion
+    # deja presente sur la VM, plutot que de la committer : le depot planning est public, et
+    # cela garantit en prime que les deux apps parlent toujours au meme projet Firebase.
+    # Si le fichier ne peut pas etre genere, l'app reste en mode local -- degradation propre.
+    Ecrire-ConfigFirebase
 
     if ($identique) {
         Remove-Item $temporaire -Force

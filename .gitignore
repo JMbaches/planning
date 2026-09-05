@@ -1,1 +1,7 @@
 .claude/
+
+# Genere sur la VM par deploy-planning.ps1 depuis postgres-layer.js.
+# Contient la configuration Firebase de l app de gestion : ce depot est PUBLIC,
+# ce fichier ne doit jamais y entrer. Sa presence est aussi ce qui active le mode
+# partage — absent, l app reste en localStorage (cas de GitHub Pages).
+firebase-config.js
