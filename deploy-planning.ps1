@@ -14,7 +14,12 @@
 param(
     # Valeurs par defaut = la VM. Surchargeables pour tester ailleurs sans rien deployer.
     [string] $Source      = 'https://raw.githubusercontent.com/JMbaches/planning/main/index.html',
-    [string] $Destination = 'C:\inetpub\wwwroot\planning',
+    # Racine d'Apache relevee sur la VM le 2026-09-05 : c'est du WAMP, pas IIS.
+    #   DocumentRoot "c:/wamp/www"   (c:\wamp\bin\apache\apache2.4.18\conf\httpd.conf)
+    # La machine possede AUSSI un C:\inetpub\wwwroot, vestige d'IIS, qu'Apache ne sert pas.
+    # Ne pas s'y fier : le runbook et le web.config du depot de l'app de gestion decrivent une
+    # installation IIS qui ne correspond plus a la realite de la machine.
+    [string] $Destination = 'C:\wamp\www\planning',
     [string] $Journal     = '',
     [int]    $TailleMini  = 100000   # garde-fou : l'app fait ~390 Ko, en dessous c'est une reponse tronquee
 )

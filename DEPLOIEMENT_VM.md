@@ -57,7 +57,7 @@ Déclencher un déploiement immédiat sans attendre :
 
 ## Étape 3 — Vérifier
 
-    Get-Content C:\inetpub\wwwroot\planning\_deploiement.log -Tail 10
+    Get-Content C:\wamp\www\planning\_deploiement.log -Tail 10
 
 Le journal ne consigne que ce qui compte : créations, mises à jour effectives et échecs. Les
 passages sans changement n'écrivent rien.
@@ -66,10 +66,24 @@ Le script refuse de remplacer un fichier valide par une réponse tronquée ou un
 réseau : en cas d'échec, la version déjà en place reste servie (testé sur réponse trop
 courte et sur 404).
 
-### Ça ne perturbe pas l'API
+### Le serveur web est Apache (WAMP), pas IIS
 
-La règle de réécriture d'IIS de l'app de gestion ne capte que les URL commençant par `api/`.
-`/planning/` est servi comme un fichier statique normal.
+Relevé sur la VM le 2026-09-05 :
+
+    ServerRoot    "c:/wamp/bin/apache/apache2.4.18"
+    DocumentRoot  "c:/wamp/www"
+
+⚠️ **Le runbook et le `web.config` du dépôt de l'app de gestion décrivent une installation IIS
+qui ne correspond plus à la machine.** Un dossier `C:\inetpub\wwwroot` subsiste, vestige d'IIS,
+mais Apache ne le sert pas : y déposer un fichier ne le rend accessible nulle part. C'est
+exactement ce qui a fait échouer la première tentative de déploiement, avec un 403 d'Apache.
+
+`/planning/` est donc servi par Apache comme un simple fichier statique, depuis
+`C:\wamp\www\planning`.
+
+À vérifier avant l'étape suivante : **par quel mécanisme `/api/` atteint l'API Node du port
+3000.** Si c'est Apache qui relaie (`ProxyPass` dans sa configuration), c'est là qu'il faut
+regarder, et non dans le `web.config` d'IIS qui n'est probablement plus utilisé.
 
 ⚠️ Ne pas confondre avec l'app planning **embarquée** dans l'app de gestion (onglet Planning,
 iframe) : c'est une copie distincte et plus ancienne, dans un autre dépôt. Voir `CLAUDE.md`.
