@@ -156,6 +156,10 @@ const I = {
 /* =========================================================================
    CONSTANTES MÉTIER
    ========================================================================= */
+// Distance en deçà de laquelle deux secteurs éloignés sont desservis par UN SEUL déplacement,
+// donc par une seule équipe. Sert de valeur par défaut au réglage « Regroupement des secteurs
+// éloignés » (Paramètres). 150 km ≈ la largeur d'une région : le 67 et le 57 tiennent dedans.
+const DEFAULT_FAR_REGION_KM = 150;
 const DEFAULT_BINOMES = [
   { id: 'A', name: 'Binôme A', members: ['Poseur 1', 'Poseur 2'], color: '#1B5FCC', phone: '', email: '' },
   { id: 'B', name: 'Binôme B', members: ['Poseur 3', 'Poseur 4'], color: '#4E9D8E', phone: '', email: '' },
@@ -1427,7 +1431,7 @@ async function planDayRemoveChantier(remainingChantiers, depot, workday, dayMeta
    validatedByBin (optionnel) : { binomeId: [chantiers validés cette semaine] } — sert d'ancre
    géographique pour que les chantiers flottants proches d'un déjà-validé rejoignent préférentiellement
    la même équipe (construire une tournée cohérente autour du point déjà fixé). */
-async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, unavail, lockedDaysByBin, closures = [], validatedByBin = {}) {
+async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, unavail, lockedDaysByBin, closures = [], validatedByBin = {}, farRegionKm = DEFAULT_FAR_REGION_KM) {
   const valid = [], pts = [];
   for (const c of allChantiers) {
     let p = null;
@@ -1466,7 +1470,15 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
     try { depotPt = await geocodeFr(depot.address, depot.postalCode, depot.city); } catch (e) {}
   }
   const FAR_KM = 250;       // au-delà de 250 km du siège = chantier "lointain"
-  const CLUSTER_KM = 80;    // deux chantiers lointains à < 80 km = même zone lointaine
+  // Deux chantiers lointains distants de moins de CLUSTER_KM partent avec la MÊME équipe, dans
+  // le même déplacement. Réglable dans Paramètres ; 150 km par défaut.
+  // Cette valeur était figée à 80 km, ce qui séparait des secteurs pourtant desservis par un seul
+  // déplacement : Strasbourg (67) et Metz (57) sont à 130 km, donc deux zones distinctes envoyées
+  // à DEUX équipes — deux montées en Alsace-Lorraine la même semaine, ~13 h de route en double,
+  // pour 2 poses côté seconde équipe. Le surplus qui ne tient pas dans la semaine part en
+  // « chantiers non casés » et attend une semaine ultérieure : c'est le comportement voulu,
+  // plutôt que d'envoyer une seconde équipe sur le même secteur.
+  const CLUSTER_KM = Number(farRegionKm) > 0 ? Number(farRegionKm) : DEFAULT_FAR_REGION_KM;
 
   // assign[i] = index du binôme pour le chantier valid[i]
   const assign = new Array(valid.length).fill(0);
@@ -1685,6 +1697,7 @@ function App() {
   const [workday, setWorkday] = useState(() => sGet(SK.settings, {})?.workday || { start: '08:00', lunchStart: '12:00', lunchDuration: 60 });
   const [unavail, setUnavail] = useState(() => sGet(SK.settings, {})?.unavail || []);
   const [archiveMonths, setArchiveMonths] = useState(() => sGet(SK.settings, {})?.archiveMonths ?? 3);
+  const [farRegionKm, setFarRegionKm] = useState(() => sGet(SK.settings, {})?.farRegionKm ?? DEFAULT_FAR_REGION_KM);
   const [apiKey, setApiKey] = useState(() => sGet(SK.apiKey, ''));
   const [toast, setToast] = useState(null);
   const [showExportReminder, setShowExportReminder] = useState(false);
@@ -1692,7 +1705,7 @@ function App() {
 
   useEffect(() => sSet(SK.chantiers, chantiers), [chantiers]);
   useEffect(() => sSet(SK.binomes, binomes), [binomes]);
-  useEffect(() => sSet(SK.settings, { poseTypes, depot, workday, unavail, archiveMonths }), [poseTypes, depot, workday, unavail, archiveMonths]);
+  useEffect(() => sSet(SK.settings, { poseTypes, depot, workday, unavail, archiveMonths, farRegionKm }), [poseTypes, depot, workday, unavail, archiveMonths, farRegionKm]);
   useEffect(() => sSet(SK.apiKey, apiKey), [apiKey]);
 
   // Rappel d'export : si des modifications ont été enregistrées depuis le dernier export
@@ -1757,11 +1770,11 @@ function App() {
       <main className="max-w-7xl mx-auto px-6 pb-24">
         {tab === 'dashboard' && <Dashboard chantiers={chantiers} binomes={binomes} setTab={setTab} />}
         {tab === 'chantiers' && <Chantiers {...{chantiers, binomes, poseTypes, apiKey, upsert: upsertChantier, del: deleteChantier, showToast, setTab, archiveMonths}} pendingEdit={pendingEdit} onClearPendingEdit={() => setPendingEdit(null)} />}
-        {tab === 'planning' && <EmploiDuTemps chantiers={chantiers} binomes={binomes} depot={depot} workday={workday} unavail={unavail} upsert={upsertChantier} showToast={showToast} setTab={setTab} setPendingEdit={setPendingEdit} poseTypes={poseTypes} />}
+        {tab === 'planning' && <EmploiDuTemps chantiers={chantiers} binomes={binomes} depot={depot} workday={workday} unavail={unavail} upsert={upsertChantier} showToast={showToast} setTab={setTab} setPendingEdit={setPendingEdit} poseTypes={poseTypes} farRegionKm={farRegionKm} />}
         {tab === 'feuilles' && <FeuillesDeRoute chantiers={chantiers} binomes={binomes} depot={depot} />}
         {tab === 'stats' && <Stats chantiers={chantiers} binomes={binomes} poseTypes={poseTypes} setPoseTypes={setPoseTypes} showToast={showToast} />}
         {tab === 'apropos' && <APropos />}
-        {tab === 'parametres' && <Parametres {...{binomes, setBinomes, poseTypes, setPoseTypes, depot, setDepot, workday, setWorkday, unavail, setUnavail, apiKey, setApiKey, chantiers, setChantiers, showToast, autoBackup, setAutoBackup, archiveMonths, setArchiveMonths}} />}
+        {tab === 'parametres' && <Parametres {...{binomes, setBinomes, poseTypes, setPoseTypes, depot, setDepot, workday, setWorkday, unavail, setUnavail, apiKey, setApiKey, chantiers, setChantiers, showToast, autoBackup, setAutoBackup, archiveMonths, setArchiveMonths, farRegionKm, setFarRegionKm}} />}
       </main>
       <footer className="no-print" style={{ borderTop: '1px solid var(--border)', background: 'var(--paper)' }}>
         <div className="max-w-7xl mx-auto px-6 py-5 flex flex-wrap items-center justify-between gap-2">
@@ -3327,7 +3340,7 @@ function cleanSavedSchedules(schedules) {
   return cleaned;
 }
 
-function EmploiDuTemps({ chantiers, binomes, depot, workday, unavail, upsert, showToast, setTab, setPendingEdit, poseTypes }) {
+function EmploiDuTemps({ chantiers, binomes, depot, workday, unavail, upsert, showToast, setTab, setPendingEdit, poseTypes, farRegionKm }) {
   const [weekStart, setWeekStart] = useState(getWeekStart(new Date()));
   const [schedules, setSchedules] = useState({}); // binId -> { dayPlans, assignments, overflow, source, count }
   const [usedPools, setUsedPools] = useState(null); // pools réellement utilisés (clusters en mode auto)
@@ -3586,7 +3599,7 @@ ${sign}`,
       // Plus de fusion/cache séparé : une seule passe de calcul par binôme, comme pour tout le reste.
       if (mode === 'auto') {
         setProgress('zones géographiques');
-        const { byBin, pools, ungeocoded } = await autoAssignAndPlan(pool, binomes, depot, workday, days, unavail, {}, closures, validatedByBin);
+        const { byBin, pools, ungeocoded } = await autoAssignAndPlan(pool, binomes, depot, workday, days, unavail, {}, closures, validatedByBin, farRegionKm);
         setSchedules(byBin);
         setUsedPools(binomes.map(b => ({ bin: b, pool: pools[b.id] || [] })));
         setUngeocoded(ungeocoded);
@@ -4922,7 +4935,7 @@ function APropos() {
 /* =========================================================================
    PARAMÈTRES
    ========================================================================= */
-function Parametres({ binomes, setBinomes, poseTypes, setPoseTypes, depot, setDepot, workday, setWorkday, unavail, setUnavail, apiKey, setApiKey, chantiers, setChantiers, showToast, autoBackup, setAutoBackup, archiveMonths, setArchiveMonths }) {
+function Parametres({ binomes, setBinomes, poseTypes, setPoseTypes, depot, setDepot, workday, setWorkday, unavail, setUnavail, apiKey, setApiKey, chantiers, setChantiers, showToast, autoBackup, setAutoBackup, archiveMonths, setArchiveMonths, farRegionKm, setFarRegionKm }) {
   const [keyDraft, setKeyDraft] = useState(apiKey);
   const [modelDraft, setModelDraft] = useState(() => sGet(SK.modelName, DEFAULT_MODEL));
   const [orsDraft, setOrsDraft] = useState(() => sGet(SK.orsKey, ''));
@@ -5378,6 +5391,31 @@ function Parametres({ binomes, setBinomes, poseTypes, setPoseTypes, depot, setDe
             <button onClick={() => showToast('Dépôt enregistré')} className="btn-primary mt-4"><I.save size={14} /> Enregistrer</button>
           </div>
         </div>
+      </section>
+
+      <section className="card p-6 mb-6">
+        <div className="flex items-center gap-3 mb-1">
+          <span style={{ color: 'var(--ink-faint)' }}><I.mapPin size={20} /></span>
+          <h2 className="font-display text-2xl font-semibold">Regroupement des secteurs éloignés</h2>
+        </div>
+        <p className="text-sm mb-4" style={{ color: 'var(--ink-soft)' }}>
+          Deux chantiers éloignés du dépôt et distants de moins que cette valeur partent avec la
+          <strong> même équipe</strong>, dans un seul déplacement. Au-delà, ils forment deux secteurs
+          distincts et peuvent être confiés à deux équipes. Augmente la valeur si des départements
+          voisins se retrouvent sur deux tournées séparées ; diminue-la si une équipe part trop loin
+          dans la semaine. Ce qui ne tient pas dans la semaine attend la semaine suivante — jamais
+          une seconde équipe sur le même secteur.
+        </p>
+        <div className="grid md:grid-cols-3 gap-3">
+          <Field label="Distance de regroupement (km)">
+            <input type="number" min="10" step="10" value={farRegionKm}
+              onChange={e => setFarRegionKm(parseInt(e.target.value) || DEFAULT_FAR_REGION_KM)} />
+          </Field>
+        </div>
+        <p className="text-xs mt-2" style={{ color: 'var(--ink-faint)' }}>
+          Par défaut {DEFAULT_FAR_REGION_KM} km, environ la largeur d'une région. À 80 km, Strasbourg
+          et Metz (130 km) partaient sur deux équipes différentes.
+        </p>
       </section>
 
       <section className="card p-6 mb-6">
