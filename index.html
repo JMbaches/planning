@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>JM Bâches — Gestion des chantiers</title>
 <script src="https://cdn.tailwindcss.com"></script>
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Roboto+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
     --bg: #F4F4F2;
@@ -31,8 +31,8 @@
   }
   * { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility; }
   body { background: var(--bg); color: var(--ink); font-family: 'DM Sans', system-ui, sans-serif; margin: 0; }
-  .font-display { font-family: 'JetBrains Mono', monospace; font-weight: 700; letter-spacing: -0.01em; }
-  .font-mono { font-family: 'JetBrains Mono', monospace; }
+  .font-display { font-family: 'Roboto Mono', monospace; font-weight: 700; letter-spacing: -0.01em; }
+  .font-mono { font-family: 'Roboto Mono', monospace; }
   .grain { background-image: radial-gradient(rgba(0,0,0,0.022) 1px, transparent 1px); background-size: 3px 3px; }
   .stripe { background: repeating-linear-gradient(45deg, rgba(27,95,204,0.07), rgba(27,95,204,0.07) 8px, transparent 8px, transparent 16px); }
   .diamond-sep { color: var(--ink-faint); opacity: 0.5; font-size: 9px; }
@@ -59,7 +59,7 @@
 
   .card { background: var(--paper); border: 1px solid var(--border); border-radius: 4px; box-shadow: var(--shadow-sm); transition: box-shadow .2s var(--ease), border-color .2s var(--ease), transform .2s var(--ease); }
   .card-hover:hover { box-shadow: var(--shadow-md); border-color: var(--border-strong); transform: translateY(-2px); }
-  .label-cap { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; font-family: 'JetBrains Mono', monospace; }
+  .label-cap { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-faint); font-weight: 600; font-family: 'Roboto Mono', monospace; }
   .fadein { animation: fadeIn .35s var(--ease); }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
   .spin { animation: spin 1s linear infinite; display: inline-flex; }
@@ -75,6 +75,11 @@
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
 
   @media print {
+    /* Sans print-color-adjust, les navigateurs suppriment tous les fonds de couleur à
+       l'impression : la légende « couleur = type de chantier » de la grille ne sortait pas, ce
+       qui obligeait à photographier l'écran pour garder l'information. 'exact' force le rendu
+       fidèle, sans dépendre de la case « Graphismes d'arrière-plan » de la boîte d'impression. */
+    *, *::before, *::after { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
     body { background: white; }
     .no-print { display: none !important; }
     .print-page { page-break-after: always; }
@@ -269,6 +274,21 @@ function isClosedDay(iso, extraClosures = []) {
 const addDays = (date, n) => { const d = new Date(date); d.setDate(d.getDate() + n); return d; };
 // Produit 'YYYY-MM-DD' à partir des composantes LOCALES (pas UTC) — évite le recul d'un jour.
 const toISO = (d) => { const x = (d instanceof Date) ? d : new Date(d); const y = x.getFullYear(); const m = String(x.getMonth() + 1).padStart(2, '0'); const day = String(x.getDate()).padStart(2, '0'); return `${y}-${m}-${day}`; };
+// Jours AFFICHÉS d'une semaine. Par défaut lundi→vendredi : les poses vont du lundi au jeudi
+// (POSE_DAYS = 4) et le vendredi est réservé au retour dépôt, donc la colonne samedi était
+// structurellement toujours vide — retirée de tout l'affichage (demande atelier, 2026-09).
+// FILET DE SÉCURITÉ : un chantier peut malgré tout être calé un samedi ou un dimanche à la main
+// (Assignation manuelle, champ Date de la fiche). La semaine est alors rallongée jusqu'à ce
+// jour-là. Ne JAMAIS remettre une longueur fixe ici : c'est ce qui faisait disparaître, sans le
+// moindre message, un chantier du samedi de la feuille de route imprimée remise à l'équipe.
+const WEEK_DISPLAY_DAYS = 5;
+const weekSpanDays = (weekStart, chantiers) => {
+  for (let i = 6; i >= WEEK_DISPLAY_DAYS; i--) {
+    const iso = toISO(addDays(weekStart, i));
+    if ((chantiers || []).some(c => c.scheduledDate === iso)) return i + 1;
+  }
+  return WEEK_DISPLAY_DAYS;
+};
 // Horodatage pour nom de fichier : 2026-06-15_14h30 (repérage de la dernière version)
 const stampFile = (d = new Date()) => { const x = (d instanceof Date) ? d : new Date(d); const p = n => String(n).padStart(2, '0'); return `${x.getFullYear()}-${p(x.getMonth() + 1)}-${p(x.getDate())}_${p(x.getHours())}h${p(x.getMinutes())}`; };
 // Indisponibilité : une entrée { scope:'all'|binomeId, from, to } bloque [from..to] inclus.
@@ -2621,7 +2641,9 @@ function FeuillesDeRoute({ chantiers, binomes, depot }) {
 
   // Semaine (lundi→vendredi) contenant la date choisie
   const weekStart = useMemo(() => getWeekStart(parseISO(date)), [date]);
-  const weekDays = useMemo(() => Array.from({ length: 5 }, (_, i) => toISO(addDays(weekStart, i))), [weekStart]);
+  const weekDays = useMemo(
+    () => Array.from({ length: weekSpanDays(weekStart, chantiers) }, (_, i) => toISO(addDays(weekStart, i))),
+    [weekStart, chantiers]);
   // Chantiers planifiés de la semaine, regroupés par binôme puis par jour (triés par ordre/CP)
   const weekData = useMemo(() => {
     const bins = weekScope === 'tous' ? binomes : binomes.filter(b => b.id === binId);
@@ -2834,7 +2856,9 @@ function FeuillesDeRoute({ chantiers, binomes, depot }) {
 }
 
 function PrintSheetWeek({ weekStart, weekData, chantiers, depot, weekDays, onBack }) {
-  const weekLabel = `Semaine ${getISOWeek(weekStart)} · ${weekStart.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long' })} – ${addDays(weekStart, 4).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })}`;
+  const lastISO = weekData.flatMap(w => (w.byDay || []).map(d => d.iso)).sort().pop();
+  const lastDay = lastISO ? parseISO(lastISO) : addDays(weekStart, WEEK_DISPLAY_DAYS - 1);
+  const weekLabel = `Semaine ${getISOWeek(weekStart)} · ${weekStart.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long' })} – ${lastDay.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })}`;
   return (
     <div className="pt-10 fadein">
       <div className="no-print flex gap-3 mb-6">
@@ -2846,7 +2870,7 @@ function PrintSheetWeek({ weekStart, weekData, chantiers, depot, weekDays, onBac
           <div className="flex justify-between items-start pb-6 mb-6" style={{ borderBottom: '2px solid var(--ink)' }}>
             <div>
               <div className="font-mono text-xs uppercase tracking-widest" style={{ color: 'var(--ink-soft)' }}>FEUILLE DE ROUTE HEBDO · JM BÂCHES</div>
-              <h1 className="font-display text-4xl font-bold mt-1">Semaine du {weekLabel}</h1>
+              <h1 className="font-display text-4xl font-bold mt-1">{weekLabel}</h1>
             </div>
             <div className="text-right">
               <div className="label-cap">Binôme</div>
@@ -2996,7 +3020,7 @@ function PrintSheet({ date, binome, chantiers, driveInfo, onBack }) {
 /* =========================================================================
    EXPORT EXCEL — emplois du temps vers .xlsx (onglet liste + onglet grille)
    ========================================================================= */
-const JOURS_FR = ['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
+const JOURS_FR = ['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi','Dimanche'];
 
 function eventLabel(ev) {
   switch (ev.type) {
@@ -3010,7 +3034,7 @@ function eventLabel(ev) {
 }
 
 // edtStore : { weekKey: { schedules, usedPools, ... } } ; binomes ; weeksToExport : liste de weekKey
-function exportEdtToExcel(edtStore, binomes, weeksToExport, depot) {
+function exportEdtToExcel(edtStore, binomes, weeksToExport, depot, poseTypes) {
   if (typeof XLSX === 'undefined') { alert("La librairie d'export n'est pas chargée. Vérifie ta connexion puis réessaie."); return false; }
   const binName = (id) => (binomes.find(b => b.id === id)?.name) || id;
 
@@ -3025,8 +3049,16 @@ function exportEdtToExcel(edtStore, binomes, weeksToExport, depot) {
     const data = edtStore[wk];
     if (!data || !data.schedules) return;
     const monday = parseISO(wk);
-    const weekLabel = `${monday.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'})} – ${addDays(monday,5).toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'})}`;
-    const dayISOs = Array.from({length:6},(_,i)=>toISO(addDays(monday,i)));
+    // Lundi→vendredi, rallongé si un binôme a un jour planifié le samedi ou le dimanche.
+    const daySpan = (() => {
+      for (let i = 6; i >= WEEK_DISPLAY_DAYS; i--) {
+        const iso = toISO(addDays(monday, i));
+        if (binomes.some(b => data.schedules[b.id]?.dayPlans?.[iso]?.events?.length)) return i + 1;
+      }
+      return WEEK_DISPLAY_DAYS;
+    })();
+    const weekLabel = `${monday.toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit'})} – ${addDays(monday,daySpan-1).toLocaleDateString('fr-FR',{day:'2-digit',month:'2-digit',year:'numeric'})}`;
+    const dayISOs = Array.from({length:daySpan},(_,i)=>toISO(addDays(monday,i)));
 
     binomes.forEach(bin => {
       const res = data.schedules[bin.id];
@@ -3065,7 +3097,7 @@ function exportEdtToExcel(edtStore, binomes, weeksToExport, depot) {
 
       // GRILLE : un bloc par binôme, jours en colonnes, créneaux empilés
       gridRows.push([`Semaine ${weekLabel}`, bin.name, bin.members ? bin.members.join(' · ') : '']);
-      gridRows.push(['', ...JOURS_FR]);
+      gridRows.push(['', ...JOURS_FR.slice(0, dayISOs.length)]);
       // construit, pour chaque jour, la liste de {texte, couleur} ; couleur seulement pour les poses
       const cols = dayISOs.map(iso => {
         const plan = res.dayPlans[iso];
@@ -3317,8 +3349,10 @@ function EmploiDuTemps({ chantiers, binomes, depot, workday, unavail, upsert, sh
 
   const weekKey = useMemo(() => toISO(weekStart), [weekStart]); // clé d'enregistrement = lundi ISO
 
-  const days = useMemo(() => Array.from({ length: 6 }, (_, i) => addDays(weekStart, i)), [weekStart]);
-  const weekLabel = `S${getISOWeek(weekStart)} · ${weekStart.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })} – ${addDays(weekStart, 5).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })}`;
+  const days = useMemo(
+    () => Array.from({ length: weekSpanDays(weekStart, chantiers) }, (_, i) => addDays(weekStart, i)),
+    [weekStart, chantiers]);
+  const weekLabel = `S${getISOWeek(weekStart)} · ${weekStart.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })} – ${days[days.length - 1].toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })}`;
 
   // Un chantier est "figé" s'il a déjà une date planifiée sur une AUTRE semaine que celle affichée.
   // Par défaut, l'optimisation ne touche pas à ces chantiers (stabilité du planning).
@@ -3832,7 +3866,7 @@ ${sign}`,
         pdf.text('JM Baches', PW - MR, MT + 7, { align: 'right' });
 
         // ── EN-TÊTES COLONNES ────────────────────────────────────────────
-        const DAY_NAMES = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven'];
+        const DAY_NAMES = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
         pdfDays.forEach((d, di) => {
           const cx = gridLeft + di * COL_W + COL_W / 2;
           pdf.setFont('helvetica', 'bold'); pdf.setFontSize(9.5); pdf.setTextColor(55, 55, 55);
@@ -4043,7 +4077,7 @@ ${sign}`,
     // si la semaine affichée a une grille à l'écran non encore enregistrée, on l'utilise telle quelle
     const effective = { ...store };
     if (Object.keys(schedules).length) effective[weekKey] = { schedules, usedPools, ungeocoded };
-    exportEdtToExcel(effective, binomes, [weekKey], depot);
+    exportEdtToExcel(effective, binomes, [weekKey], depot, poseTypes);
   };
   // Export Excel — toutes les semaines enregistrées
   const exportAllWeeks = () => {
@@ -4051,7 +4085,7 @@ ${sign}`,
     const store = sGet(SK.edt, {});
     const keys = Object.keys(store).sort();
     if (!keys.length) { alert("Aucune semaine enregistrée. Accepte d'abord un emploi du temps avec « Accepter et enregistrer »."); return; }
-    exportEdtToExcel(store, binomes, keys, depot);
+    exportEdtToExcel(store, binomes, keys, depot, poseTypes);
   };
 
   const hasSchedules = Object.keys(schedules).length > 0;
@@ -4279,7 +4313,7 @@ ${sign}`,
                   <div className="card p-6 text-sm" style={{ color: 'var(--ink-faint)' }}>—</div>
                 ) : (
                   <div className="card overflow-x-auto">
-                    <div style={{ minWidth: 760, display: 'grid', gridTemplateColumns: '52px repeat(6, 1fr)' }}>
+                    <div style={{ minWidth: 760, display: 'grid', gridTemplateColumns: `52px repeat(${days.length}, 1fr)` }}>
                       <div style={{ borderBottom: '1px solid var(--border)' }} />
                       {days.map(d => {
                         const isToday = toISO(d) === toISO(new Date());
@@ -4293,7 +4327,7 @@ ${sign}`,
 
                       <div style={{ position: 'relative', height: gridHeight }}>
                         {hours.map(h => (
-                          <div key={h} style={{ position: 'absolute', top: (h - axisStartH) * HOUR_PX - 6, right: 6, fontSize: 10, color: 'var(--ink-faint)', fontFamily: 'JetBrains Mono, monospace' }}>{h}h</div>
+                          <div key={h} style={{ position: 'absolute', top: (h - axisStartH) * HOUR_PX - 6, right: 6, fontSize: 10, color: 'var(--ink-faint)', fontFamily: 'Roboto Mono, monospace' }}>{h}h</div>
                         ))}
                       </div>
                       {days.map(d => {
@@ -4345,11 +4379,11 @@ ${sign}`,
                                     h >= 28 && destLabel
                                       /* assez de place : deux lignes séparées */
                                       ? <>
-                                          <span style={{ fontSize: 9, color: veille ? 'var(--ink-soft)' : 'var(--ink-faint)', fontFamily: 'JetBrains Mono, monospace', whiteSpace: 'nowrap', lineHeight: 1.2, padding: '0 2px' }}>{label}</span>
+                                          <span style={{ fontSize: 9, color: veille ? 'var(--ink-soft)' : 'var(--ink-faint)', fontFamily: 'Roboto Mono, monospace', whiteSpace: 'nowrap', lineHeight: 1.2, padding: '0 2px' }}>{label}</span>
                                           <span style={{ fontSize: 8, color: 'var(--ink-soft)', fontWeight: 600, whiteSpace: 'nowrap', lineHeight: 1.2, padding: '0 2px' }}>{destLabel}</span>
                                         </>
                                       /* pas assez : tout sur une ligne */
-                                      : <span style={{ fontSize: 9, color: veille ? 'var(--ink-soft)' : 'var(--ink-faint)', fontFamily: 'JetBrains Mono, monospace', whiteSpace: 'nowrap', lineHeight: 1.2, padding: '0 2px' }}>{destLabel ? `${label} ${destLabel}` : label}</span>
+                                      : <span style={{ fontSize: 9, color: veille ? 'var(--ink-soft)' : 'var(--ink-faint)', fontFamily: 'Roboto Mono, monospace', whiteSpace: 'nowrap', lineHeight: 1.2, padding: '0 2px' }}>{destLabel ? `${label} ${destLabel}` : label}</span>
                                   )}
                                 </div>;
                               }
@@ -4381,8 +4415,8 @@ ${sign}`,
                                 )}
                                 <div style={{ fontSize: 10, fontWeight: 700, lineHeight: 1.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.fixed ? '📌 ' : ''}{minToHHMM(ev.start)} {c.clientName}{ev.contd ? ' (suite)' : ''}</div>
                                 {rue && <div style={{ fontSize: 9, opacity: 0.9, lineHeight: 1.15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{rue}</div>}
-                                {cpVille && <div style={{ fontSize: 9, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{cpVille}</div>}
-                                {tel && <div style={{ fontSize: 9, fontFamily: 'JetBrains Mono, monospace', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>☎ {tel}</div>}
+                                {cpVille && <div style={{ fontSize: 9, fontWeight: 700, fontFamily: 'Roboto Mono, monospace', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{cpVille}</div>}
+                                {tel && <div style={{ fontSize: 9, fontFamily: 'Roboto Mono, monospace', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>☎ {tel}</div>}
                                 {h > 46 && <div style={{ fontSize: 8, opacity: 0.7, lineHeight: 1.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.type} · {c.estimatedDuration}h</div>}
                               </div>;
                             })}
@@ -4391,7 +4425,7 @@ ${sign}`,
                       })}
 
                       <div style={{ borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center', paddingRight: 6 }}>
-                        <span style={{ fontSize: 8, color: 'var(--ink-faint)', fontFamily: 'JetBrains Mono, monospace', textTransform: 'uppercase', letterSpacing: '0.03em', lineHeight: 1.4, textAlign: 'right' }}>fin<br />route</span>
+                        <span style={{ fontSize: 8, color: 'var(--ink-faint)', fontFamily: 'Roboto Mono, monospace', textTransform: 'uppercase', letterSpacing: '0.03em', lineHeight: 1.4, textAlign: 'right' }}>fin<br />route</span>
                       </div>
                       {(() => { const hasReturnDay = Object.values(res.dayPlans || {}).some(p => p && p.returnOnly); return days.map(d => {
                         const plan = res.dayPlans[toISO(d)];
@@ -4407,10 +4441,10 @@ ${sign}`,
                           <div key={'f' + toISO(d)} className="p-1 text-center" style={{ borderLeft: '1px solid var(--border)', borderTop: '1px solid var(--border)' }}>
                             {plan
                               ? (plan.returnOnly
-                                  ? <span style={{ fontSize: 10, color: 'var(--ink-faint)', fontFamily: 'JetBrains Mono, monospace', lineHeight: 1.3 }} title="Retour au siège le lendemain de la dernière pose">
+                                  ? <span style={{ fontSize: 10, color: 'var(--ink-faint)', fontFamily: 'Roboto Mono, monospace', lineHeight: 1.3 }} title="Retour au siège le lendemain de la dernière pose">
                                       retour dépôt<br />{fmtDuration(plan.approachSec)} route
                                     </span>
-                                  : <span title={routeTitle} style={{ fontSize: 10, color: plan.oversized ? 'var(--accent)' : 'var(--ink-faint)', fontFamily: 'JetBrains Mono, monospace', lineHeight: 1.3, cursor: 'help' }}>
+                                  : <span title={routeTitle} style={{ fontSize: 10, color: plan.oversized ? 'var(--accent)' : 'var(--ink-faint)', fontFamily: 'Roboto Mono, monospace', lineHeight: 1.3, cursor: 'help' }}>
                                       fin {minToHHMM(plan.endMin)}{plan.oversized ? ' ⚠' : ''}<br />{fmtDuration((plan.approachSec || 0) + (plan.totalDriveSec || 0) + (plan.siegeReturnSec || 0))} route
                                       {!plan.isLastPoseDay && (plan.staysOnSite || plan.siegeReturnSec > 0) && (
                                         <><br /><span style={{ color: plan.staysOnSite ? 'var(--ink-faint)' : 'var(--teal-deep)' }}>
@@ -5256,14 +5290,14 @@ function Parametres({ binomes, setBinomes, poseTypes, setPoseTypes, depot, setDe
               Nécessaire pour l'extraction automatique des contrats. Crée ta clé sur <a href="https://console.anthropic.com/" target="_blank" style={{ color: 'var(--accent)', textDecoration: 'underline' }}>console.anthropic.com</a> (≈3-5€/mois pour ton volume). Elle est stockée uniquement dans ton navigateur, jamais envoyée ailleurs.
             </p>
             <div className="flex gap-3">
-              <input type="password" placeholder="sk-ant-..." value={keyDraft} onChange={e => setKeyDraft(e.target.value)} style={{ flex: 1, fontFamily: 'JetBrains Mono, monospace' }} />
+              <input type="password" placeholder="sk-ant-..." value={keyDraft} onChange={e => setKeyDraft(e.target.value)} style={{ flex: 1, fontFamily: 'Roboto Mono, monospace' }} />
               <button onClick={() => { setApiKey(keyDraft); showToast('Clé API enregistrée'); }} className="btn-primary"><I.save size={14} /> Enregistrer</button>
             </div>
             {apiKey && <div className="text-xs mt-2" style={{ color: '#2D5A3D' }}>✓ Clé configurée — l'extraction IA est active</div>}
             <div className="mt-4 pt-4" style={{ borderTop: '1px solid var(--border)' }}>
               <label className="label-cap" style={{ display: 'block', marginBottom: 6 }}>Modèle d'IA utilisé pour l'extraction</label>
               <div className="flex gap-3">
-                <input type="text" placeholder={DEFAULT_MODEL} value={modelDraft} onChange={e => setModelDraft(e.target.value)} style={{ flex: 1, fontFamily: 'JetBrains Mono, monospace' }} />
+                <input type="text" placeholder={DEFAULT_MODEL} value={modelDraft} onChange={e => setModelDraft(e.target.value)} style={{ flex: 1, fontFamily: 'Roboto Mono, monospace' }} />
                 <button onClick={() => { sSet(SK.modelName, (modelDraft || '').trim() || DEFAULT_MODEL); showToast('Modèle enregistré'); }} className="btn-secondary"><I.save size={14} /> Enregistrer</button>
               </div>
               <p className="text-xs mt-2" style={{ color: 'var(--ink-faint)' }}>
@@ -5287,7 +5321,7 @@ function Parametres({ binomes, setBinomes, poseTypes, setPoseTypes, depot, setDe
               Rend les temps de trajet fiables et stables. Crée un compte et un token gratuits sur <a href="https://openrouteservice.org/dev/#/signup" target="_blank" style={{ color: 'var(--accent)', textDecoration: 'underline' }}>openrouteservice.org</a> (offre gratuite ≈ 500 calculs/jour, largement suffisant). Sans clé, l'appli utilise le routage public de secours, moins fiable. Stockée uniquement dans ce navigateur.
             </p>
             <div className="flex gap-3">
-              <input type="password" placeholder="Colle ton token ORS ici…" value={orsDraft} onChange={e => { setOrsDraft(e.target.value); setOrsTestResult(null); }} style={{ flex: 1, fontFamily: 'JetBrains Mono, monospace' }} />
+              <input type="password" placeholder="Colle ton token ORS ici…" value={orsDraft} onChange={e => { setOrsDraft(e.target.value); setOrsTestResult(null); }} style={{ flex: 1, fontFamily: 'Roboto Mono, monospace' }} />
               <button onClick={async () => { setOrsTesting(true); setOrsTestResult(null); const res = await testOrsKey(orsDraft); setOrsTestResult(res); setOrsTesting(false); }} disabled={orsTesting || !orsDraft.trim()} className="btn-secondary">
                 {orsTesting ? <><span className="spin"><I.loader size={14} /></span> Test…</> : <><I.sparkles size={14} /> Tester</>}
               </button>
