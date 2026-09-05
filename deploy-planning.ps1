@@ -14,12 +14,17 @@
 param(
     # Valeurs par defaut = la VM. Surchargeables pour tester ailleurs sans rien deployer.
     [string] $Source      = 'https://raw.githubusercontent.com/JMbaches/planning/main/index.html',
-    # Racine d'Apache relevee sur la VM le 2026-09-05 : c'est du WAMP, pas IIS.
-    #   DocumentRoot "c:/wamp/www"   (c:\wamp\bin\apache\apache2.4.18\conf\httpd.conf)
-    # La machine possede AUSSI un C:\inetpub\wwwroot, vestige d'IIS, qu'Apache ne sert pas.
-    # Ne pas s'y fier : le runbook et le web.config du depot de l'app de gestion decrivent une
-    # installation IIS qui ne correspond plus a la realite de la machine.
-    [string] $Destination = 'C:\wamp\www\planning',
+    # ATTENTION : cette VM heberge DEUX serveurs web.
+    #   - port 80   : Apache 2.4.18 / PHP 5.6 (WAMP), DocumentRoot c:/wamp/www.
+    #                 Rien a voir avec l'app de gestion. C'est lui qui renvoyait un 403 quand on
+    #                 testait http://<vm>/planning/ -- on interrogeait le mauvais serveur.
+    #   - port 8080 : IIS, qui sert l'app de gestion (Aquamaster) ET relaie /api vers l'API Node
+    #                 du port 3000. C'est CE serveur qui doit servir l'app de planning, pour
+    #                 qu'elle soit sur la meme origine que l'app de gestion : sans ca, pas de
+    #                 session partagee et pas d'appel a /api possible.
+    # D'ou la destination ci-dessous, la racine d'IIS. L'app est alors sur
+    # http://<vm>:8080/planning/
+    [string] $Destination = 'C:\inetpub\wwwroot\planning',
     [string] $Journal     = '',
     [int]    $TailleMini  = 100000   # garde-fou : l'app fait ~390 Ko, en dessous c'est une reponse tronquee
 )
@@ -53,9 +58,13 @@ try {
 
     # On ne remplace que si le contenu a reellement change : evite de reecrire le fichier
     # a chaque passage de la tache planifiee, et donc d'invalider le cache des navigateurs.
+    # Si le fichier en place est illisible (droits abimes), on ne compare pas : on le remplace.
+    # Sans ce filet, le calcul d'empreinte levait une exception et le script s'arretait -- donc
+    # un fichier mal installe une fois ne pouvait plus JAMAIS etre repare automatiquement.
     $identique = $false
     if (Test-Path $cible) {
-        $identique = (Get-FileHash $temporaire).Hash -eq (Get-FileHash $cible).Hash
+        try { $identique = (Get-FileHash $temporaire).Hash -eq (Get-FileHash $cible).Hash }
+        catch { Ecrire-Journal "Fichier en place illisible, il sera remplace." }
     }
 
     if ($identique) {
@@ -64,7 +73,17 @@ try {
         exit 0
     }
 
-    Move-Item -Path $temporaire -Destination $cible -Force
+    # Copy-Item et NON Move-Item. Sous Windows, deplacer un fichier CONSERVE les droits qu'il
+    # avait a la source ; le copier lui fait HERITER de ceux du dossier de destination. Un
+    # fichier deplace depuis %TEMP% vers la racine web arrive donc illisible pour le compte
+    # d'IIS, qui repond 401 -- constate sur la VM le 2026-09-05, le dossier ayant pourtant les
+    # bons droits. La copie regle ca sans avoir a toucher aux ACL.
+    # Suppression prealable indispensable : ecraser un fichier existant en conserve les droits.
+    # Sans ca, un fichier deja installe avec de mauvaises permissions les garderait indefiniment
+    # et le correctif ci-dessus n'aurait aucun effet.
+    if (Test-Path $cible) { Remove-Item $cible -Force }
+    Copy-Item -Path $temporaire -Destination $cible -Force
+    Remove-Item $temporaire -Force
     Ecrire-Journal "Mise a jour deployee : $taille octets."
     exit 0
 }
