@@ -67,6 +67,30 @@ try {
         catch { Ecrire-Journal "Fichier en place illisible, il sera remplace." }
     }
 
+    # REPARATION DES DROITS, independante du contenu.
+    # Un fichier peut avoir le BON contenu et de MAUVAIS droits : c'est le cas de tout fichier
+    # installe par une version precedente de ce script, qui utilisait Move-Item (un deplacement
+    # conserve les droits de la source, ici %TEMP%). Le fichier arrive alors sans le compte
+    # d'IIS dans ses droits, et IIS repond 401 -- constate sur la VM le 2026-09-05.
+    # Comparer le contenu ne suffisait donc pas : le script ressortait "rien a faire" en laissant
+    # le fichier illisible indefiniment. On remet l'heritage a chaque passage ; c'est idempotent
+    # et sans effet quand tout va bien.
+    # On passe par icacls /reset plutot que Get-Acl/Set-Acl : ce dernier reclame le privilege
+    # SeSecurityPrivilege, dont le compte executant la tache ne dispose pas forcement, alors
+    # qu'icacls /reset se contente du droit de modifier les permissions du fichier.
+    if (Test-Path $cible) {
+        $protege = $false
+        try { $protege = (Get-Acl $cible).AreAccessRulesProtected } catch { $protege = $true }
+        if ($protege) {
+            & icacls.exe $cible /reset | Out-Null
+            if ($LASTEXITCODE -eq 0) {
+                Ecrire-Journal 'Droits du fichier reinitialises (heritage du dossier retabli).'
+            } else {
+                Ecrire-Journal "Echec de la reinitialisation des droits (icacls code $LASTEXITCODE)."
+            }
+        }
+    }
+
     if ($identique) {
         Remove-Item $temporaire -Force
         # Pas de journal ici : la tache tourne souvent, ca noierait les vraies informations.
