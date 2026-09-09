@@ -3866,6 +3866,23 @@ ${sign}`,
         if (ch && ch.status !== 'valide' && ch.status !== 'fait') { newDates[ch.id] = a.iso; upsert({ ...ch, scheduledDate: a.iso, scheduledBinome: bin.id, status: 'planifie' }); }
       });
     });
+    // 1bis) Chantiers du lot de cette semaine qui ressortent NON CASÉS (overflow) cette fois : leur
+    // fiche peut porter une date d'un calcul précédent (posée quand ils tenaient encore dans la
+    // semaine) — sans ça, la fiche reste calée sur une journée où le planning réel ne les affiche
+    // plus (cf. cas MIMIL du 2026-09-09), et une date fantôme les exclut ensuite de toute
+    // réoptimisation d'une AUTRE semaine (isFrozenElsewhere), donc plus jamais recasés nulle part.
+    // On n'y touche pas s'ils sont verrouillés (validé, date manuelle, heure imposée).
+    (usedPools || []).forEach(({ bin, pool: poolForBin }) => {
+      const res = schedules[bin.id];
+      if (!res) return;
+      const assignedIds = new Set(res.assignments.map(a => a.id));
+      (poolForBin || []).forEach(pc => {
+        if (assignedIds.has(pc.id)) return;
+        const ch = chantiers.find(c => c.id === pc.id);
+        if (!ch || isLockedChantier(ch) || ch.status === 'fait') return;
+        if (ch.scheduledDate) upsert({ ...ch, scheduledDate: '', scheduledBinome: '', status: 'a_planifier' });
+      });
+    });
     // 2) Interventions liées : si l'interv. 1 vient d'être planifiée, on impose à l'interv. 2
     //    "pas avant (date interv.1 + délai)". Ainsi la 2ᵉ passe après, avec l'écart mini demandé.
     chantiers.forEach(c => {
