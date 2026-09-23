@@ -1226,7 +1226,11 @@ function injectLunch(events, lunchStart, lunchDur) {
 // validatedAnchors (optionnel) : [{date:'YYYY-MM-DD', lat, lon}] — chantiers déjà validés cette
 // semaine pour ce binôme (jamais dans poolInput, gérés à part). Sert UNIQUEMENT à orienter le
 // premier chantier d'un jour VOISIN d'un jour validé vers ce qui est géographiquement cohérent.
-async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures = [], validatedAnchors = []) {
+// ordreEnregistre (optionnel) : { idChantier: { iso, rang } } — place de chaque chantier dans le
+// planning affiché. Un chantier dont la place est connue SUR LE MÊME JOUR la reprend : l'ordre
+// n'est plus redécidé par le calcul de tournée, qui ne donne pas toujours le même résultat (un
+// chantier validé changeait de rang au « Recalculer les trajets », cf. mail client du 22/09).
+async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures = [], validatedAnchors = [], ordreEnregistre = null) {
   // Séparer le pool selon la fenêtre :
   // - trop tôt (notBefore dans le futur) → exclu, contrainte dure
   // - en retard (notAfter dépassé) → ajouté en fin de pool, contrainte souple
@@ -1357,6 +1361,18 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
   // tous les trajets) — sans lui, un chantier réellement à 90km pourrait sembler "rentrer" à tort.
   const GAP_FILL_RADIUS_KM = 30;
   const chunks = Array.from({ length: usablePoseDays }, () => ({ stops: [], legs: [] }));
+  // Les arrêts dont la place est connue sur ce jour passent en tête, dans l'ordre enregistré ; les
+  // autres suivent dans l'ordre du calcul (tri stable).
+  const rangEnregistre = (idx, iso) => {
+    const o = ordreEnregistre && pool[idx] && ordreEnregistre[pool[idx].id];
+    return (o && o.iso === iso) ? o.rang : null;
+  };
+  const trierSelonOrdre = (ch, iso) => {
+    if (!ordreEnregistre || !ch.stops.length) return;
+    const connus = ch.stops.filter(s => rangEnregistre(s, iso) != null).sort((a, b) => rangEnregistre(a, iso) - rangEnregistre(b, iso));
+    const autres = ch.stops.filter(s => rangEnregistre(s, iso) == null);
+    ch.stops = [...connus, ...autres];
+  };
   const lockedOrphans = [];
   let unplacedFloating = []; // flottants qui ne rentrent nulle part cette semaine → overflow, jamais perdus
   {
@@ -1367,8 +1383,18 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
       if (di >= 0) { chunks[di].stops.push(idx); placedIdx.add(idx); }
       else { lockedOrphans.push(idx); placedIdx.add(idx); }
     }
-    // Cohérence du trajet : les verrouillés d'un même jour suivent l'ordre de tournée global.
+    // Chantiers libres dont la place est connue (« Recalculer les trajets ») : ils reprennent leur
+    // jour, comme les verrouillés. S'ils ne tiennent plus, buildDay les reporte au lendemain.
+    if (ordreEnregistre) for (const idx of order) {
+      if (placedIdx.has(idx)) continue;
+      const o = ordreEnregistre[pool[idx].id];
+      const di = o ? poseList.indexOf(o.iso) : -1;
+      if (di >= 0 && dateAllowed(pool[idx], o.iso)) { chunks[di].stops.push(idx); placedIdx.add(idx); }
+    }
+    // Cohérence du trajet : les verrouillés d'un même jour suivent l'ordre de tournée global…
     chunks.forEach(ch => ch.stops.sort((a, b) => order.indexOf(a) - order.indexOf(b)));
+    // …sauf ceux dont la place est connue (ordreEnregistre), qui la gardent.
+    chunks.forEach((ch, di) => trierSelonOrdre(ch, poseList[di]));
 
     // Ancrage sur les jours ADJACENTS à un chantier déjà validé cette semaine (validatedAnchors) :
     // le premier flottant placé sur un jour encore vide et voisin d'un jour validé est choisi le
@@ -1442,6 +1468,7 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
         }
         ch.stops.push(remaining.splice(chosen.i, 1)[0]);
       }
+      trierSelonOrdre(ch, iso);
       ch.legs = ch.stops.map((s, k) => k === 0 ? legFromDepot(s) : legBetween(ch.stops[k - 1], s));
       ch.oversized = ch.stops.some(s => dayEndMinFor([s]) > DAY_END + 1);
     }
@@ -1605,100 +1632,76 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
       if (c.status === 'valide' && c.slot === 'pm') return lunchStart + lunchDur;
       return null;
     };
-    const fixedHere = events.find(ev => ev.type === 'pose' && ev.chantier && ev.chantier.scheduledDate === iso && anchorMinFor(ev.chantier, null) != null);
-    if (fixedHere) {
-      const want = anchorMinFor(fixedHere.chantier, fixedHere.start);
-      // Récupère les poses dans l'ordre, avec le trajet qui précède chacune (0 pour la 1re du jour).
-      // injectLunch a pu couper une pose en deux (contd) : on refusionne par durée réelle du chantier.
-      const poseSeq = [];
-      let pendingTravel = 0;
-      for (const ev of events) {
-        if (ev.type === 'travel') { pendingTravel += (ev.end - ev.start); continue; }
-        if (ev.type === 'pose') {
-          const prev = poseSeq[poseSeq.length - 1];
-          if (ev.contd && prev && prev.ev.chantier === ev.chantier) {
-            // suite d'une pose coupée par le déjeuner → on rallonge la durée logique, sans double trajet
-            prev.realDur += (ev.end - ev.start);
-          } else {
-            poseSeq.push({ ev, lead: pendingTravel, realDur: ev.end - ev.start });
-          }
-          pendingTravel = 0;
-        }
-      }
-      const dur = (ev) => ev.end - ev.start;
-      const others = poseSeq.filter(p => p.ev !== fixedHere);
-      const anchorObj = poseSeq.find(p => p.ev === fixedHere);
+    // Plusieurs ancres possibles dans la même journée (avant : une seule était calée, la 2ᵉ heure
+    // imposée du jour était ignorée et le chantier tombait n'importe où — mail client du 22/09).
+    const ancres = events.filter(ev => ev.type === 'pose' && !ev.contd && ev.chantier && ev.chantier.scheduledDate === iso && anchorMinFor(ev.chantier, null) != null);
+    if (ancres.length) {
+      // Poses du jour dans leur ordre actuel (une pose coupée par le déjeuner n'est comptée qu'une fois).
+      const poses = events.filter(ev => ev.type === 'pose' && !ev.contd && ev._idx != null)
+        .map(ev => ({ ev, idx: ev._idx, dur: (ev.chantier.estimatedDuration || 0) * 60 }));
+      const aCaler = poses.filter(p => ancres.includes(p.ev))
+        .map(p => ({ ...p, want: anchorMinFor(p.ev.chantier, p.ev.start) }))
+        .sort((a, b) => a.want - b.want);
+      const file = poses.filter(p => !ancres.includes(p.ev)); // les autres, ordre conservé
 
-      // Avance le temps en intégrant un trajet (lead) puis une pose, en insérant le déjeuner si on
-      // franchit l'heure de pause. Renvoie le nouvel instant.
-      const advance = (t, lead, d, out, evRef, extra) => {
-        if (lead > 0) { out.push({ type: 'travel', start: t, end: t + lead }); t += lead; }
-        if (lunchDur && t < lunchStart && t + d > lunchStart) { out.push({ type: 'lunch', start: lunchStart, end: lunchStart + lunchDur }); t = lunchStart + lunchDur; }
-        else if (lunchDur && t >= lunchStart && t < lunchStart + lunchDur) { out.push({ type: 'lunch', start: lunchStart, end: lunchStart + lunchDur }); t = lunchStart + lunchDur; }
-        out.push({ ...evRef, start: t, end: t + d, ...(extra || {}) });
-        return t + d;
+      const out = [];
+      let t = dayStart, prevIdx = null, dejeunerPose = false;
+      const placees = [];
+      const approche = events.find(ev => ev.type === 'travelApproach');
+      if (approche) { const d = approche.end - approche.start; out.push({ ...approche, start: t, end: t + d }); t += d; }
+
+      // Simule la pose de p après l'instant t0 (trajet réel depuis l'arrêt précédent, déjeuner si on
+      // le franchit ou s'il tombe pendant l'attente d'une heure imposée). Ne modifie rien.
+      const essai = (p, t0, prev, want) => {
+        const lead = prev == null ? 0 : legBetween(prev, p.idx) / 60;
+        const arrivee = t0 + lead;
+        let s = want != null ? Math.max(arrivee, want) : arrivee;
+        let dej = null;
+        if (!dejeunerPose && lunchDur) {
+          if (arrivee <= lunchStart && s >= lunchStart + lunchDur) {
+            dej = { start: lunchStart, end: lunchStart + lunchDur }; // déjeuner pendant l'attente
+          } else if ((s < lunchStart && s + p.dur > lunchStart) || (s >= lunchStart && s < lunchStart + lunchDur)) {
+            dej = { start: lunchStart, end: lunchStart + lunchDur };
+            s = Math.max(s, lunchStart + lunchDur);
+          }
+        }
+        return { lead, t0, arrivee, s, e: s + p.dur, dej };
+      };
+      const poser = (p, r, extra) => {
+        if (r.lead > 0) out.push({ type: 'travel', start: r.t0, end: r.arrivee });
+        if (r.dej) { out.push({ type: 'lunch', start: r.dej.start, end: r.dej.end, label: 'Pause déjeuner' }); dejeunerPose = true; }
+        out.push({ ...p.ev, contd: undefined, start: r.s, end: r.e, ...(extra || {}) });
+        t = r.e; prevIdx = p.idx; placees.push(p);
       };
 
-      // 1) On place les "autres" poses qui tiennent ENTIÈREMENT avant l'ancre (trajet + pose + déjeuner
-      //    éventuel), en simulant le temps réel. Le reste ira après l'ancre.
-      const before = [], after = [];
-      let sim = dayStart;
-      for (const p of others) {
-        let s = sim;
-        if (p.lead > 0) s += p.lead;
-        if (lunchDur && s < lunchStart && s + p.realDur > lunchStart) s += lunchDur; // déjeuner traversé
-        const endIfHere = s + p.realDur;
-        // il faut aussi pouvoir rejoindre l'ancre après cette pose (trajet de l'ancre)
-        if (endIfHere + (anchorObj.lead || 0) <= want) { before.push(p); sim = endIfHere; }
-        else after.push(p);
+      for (const a of aCaler) {
+        // Remplit le créneau avant l'ancre, dans l'ordre, tant que la pose ET le trajet vers
+        // l'ancre tiennent avant l'heure voulue. On ne saute jamais un chantier pour en prendre un
+        // suivant : l'ordre de la tournée est conservé.
+        while (file.length) {
+          const r = essai(file[0], t, prevIdx, null);
+          if (r.e + legBetween(file[0].idx, a.idx) / 60 > a.want) break;
+          poser(file.shift(), r);
+        }
+        const r = essai(a, t, prevIdx, a.want);
+        // Retard signalé seulement pour une heure imposée : un validé « après-midi » n'a pas d'heure.
+        poser(a, r, { fixed: true, anchorLate: !!a.ev.chantier.fixedTime && r.s > a.want + 1 });
       }
-
-      // 2) Reconstruction réelle de la journée
-      const out = [];
-      let t = dayStart;
-      for (const p of before) t = advance(t, p.lead, p.realDur, out, p.ev);
-      // trajet pour rejoindre l'ancre depuis la dernière pose "avant"
-      if (anchorObj.lead > 0) { out.push({ type: 'travel', start: t, end: t + anchorObj.lead }); t += anchorObj.lead; }
-      // déjeuner si l'arrivée à l'ancre l'enjambe
-      if (lunchDur && t < lunchStart && Math.max(t, want) > lunchStart && t <= lunchStart) {
-        // si on a du temps avant l'heure voulue et que midi tombe là, on déjeune
-        if (want > lunchStart) { out.push({ type: 'lunch', start: lunchStart, end: lunchStart + lunchDur }); t = Math.max(t, lunchStart + lunchDur); }
-      }
-      // l'ancre : à l'heure voulue si atteignable, sinon au plus tôt (et on signale le retard)
-      const anchorStart = Math.max(t, want, dayStart);
-      const anchorLate = anchorStart > want + 1; // plus d'1 min de retard sur l'heure demandée
-      t = anchorStart;
-      out.push({ ...fixedHere, start: t, end: t + anchorObj.realDur, fixed: true, anchorLate });
-      t += anchorObj.realDur;
-      // poses APRÈS l'ancre : on ne les pose que si elles finissent avant 18h ; sinon elles sont
-      // reportées (on ne crée pas de pose qui finit à 19h-20h).
-      // IMPORTANT : on vérifie AVANT de pousser le trajet — sinon le trajet reste dans out sans sa pose.
-      for (const p of after) {
-        const lead = p.lead > 0 ? p.lead : 0;
-        let s = t + lead;
-        if (lunchDur && s < lunchStart && s + p.realDur > lunchStart) s += lunchDur;
-        const e = s + p.realDur;
-        if (e > DAY_END) {
-          // ne tient pas après l'ancre aujourd'hui → reporté (on ne pousse ni le trajet ni la pose)
-          const id = p.ev.chantier && p.ev.chantier.id;
-          const ix = localAssign.findIndex(a => a.id === id);
-          if (ix >= 0) localAssign.splice(ix, 1);
-          if (p.ev._idx != null) {
-            overflow.push(pool[p.ev._idx]);
-            // le retirer aussi de chunk.stops : le retour au dépôt / la nuit sur place se calculent
-            // depuis le DERNIER CHANTIER RÉELLEMENT VISITÉ, pas un stop qu'on vient de reporter.
-            const sIx = chunk.stops.indexOf(p.ev._idx);
-            if (sIx >= 0) {
-              chunk.stops.splice(sIx, 1);
-              chunk.legs = chunk.stops.map((s, k) => k === 0 ? legFromDepot(s) : legBetween(chunk.stops[k - 1], s));
-            }
-          }
+      // Après la dernière ancre : ce qui finit avant la coupure du soir, le reste est reporté.
+      for (const p of file) {
+        const r = essai(p, t, prevIdx, null);
+        if (r.e > DAY_END) {
+          overflow.push(pool[p.idx]);
           continue;
         }
-        t = advance(t, lead, p.realDur, out, p.ev);
+        poser(p, r);
       }
       events = out;
-      // endMin = fin de la dernière POSE du second pass (pas d'un trajet fantôme)
+      // L'ordre réel de la journée devient celui des arrêts : le retour au dépôt / la nuit sur place
+      // se calculent depuis le DERNIER CHANTIER RÉELLEMENT VISITÉ, et la feuille de route suit cet ordre.
+      chunk.stops = placees.map(p => p.idx);
+      chunk.legs = chunk.stops.map((s, k) => k === 0 ? legFromDepot(s) : legBetween(chunk.stops[k - 1], s));
+      localAssign = placees.map((p, k) => ({ id: p.ev.chantier.id, iso, order: k, geo: geoByIdx[p.idx] || null }));
       const lastPoseOut = [...out].reverse().find(e => e.type === 'pose');
       endMin = lastPoseOut ? lastPoseOut.end : (out.length ? out[out.length - 1].end : dayStart);
     }
@@ -1993,7 +1996,7 @@ async function planDayRemoveChantier(remainingChantiers, depot, workday, dayMeta
    validatedByBin (optionnel) : { binomeId: [chantiers validés cette semaine] } — sert d'ancre
    géographique pour que les chantiers flottants proches d'un déjà-validé rejoignent préférentiellement
    la même équipe (construire une tournée cohérente autour du point déjà fixé). */
-async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, unavail, lockedDaysByBin, closures = [], validatedByBin = {}, farRegionKm = DEFAULT_FAR_REGION_KM) {
+async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, unavail, lockedDaysByBin, closures = [], validatedByBin = {}, farRegionKm = DEFAULT_FAR_REGION_KM, ordreEnregistre = null) {
   const valid = [], pts = [];
   for (const c of allChantiers) {
     let p = null;
@@ -2179,7 +2182,7 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
     // validés RESTENT posables : le validé y est placé comme arrêt verrouillé et le reste du jour se
     // remplit normalement (plus de jour « réservé » exclu du calcul).
     const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, binomes[ci].id, iso));
-    if (pool.length) byBin[binomes[ci].id] = await planWeek(pool, depot, workday, days, poseDaysISO, closures, validatedAnchors[binomes[ci].id] || []);
+    if (pool.length) byBin[binomes[ci].id] = await planWeek(pool, depot, workday, days, poseDaysISO, closures, validatedAnchors[binomes[ci].id] || [], ordreEnregistre);
   }
   const ungeocoded = allChantiers.filter(c => !valid.includes(c));
   return { byBin, pools, ungeocoded };
@@ -4187,8 +4190,27 @@ ${sign}`,
     return () => window.removeEventListener('jmb-distant', surDistant);
   }, [schedules, weekKey, computing]);
 
+  // Place de chaque chantier dans la semaine affichée (à défaut, enregistrée) : { id: { iso, rang } }.
+  // seulsVerrouilles : ne garder que les validés / heure imposée / date manuelle encore sur ce jour.
+  const ordreDeLaSemaine = (seulsVerrouilles) => {
+    const src = Object.keys(schedules || {}).length ? schedules : ((sGet(SK.edt, {})[weekKey] || {}).schedules || {});
+    const out = {};
+    Object.values(src).forEach(res => Object.entries((res && res.dayPlans) || {}).forEach(([iso, dp]) => {
+      let rang = 0;
+      (dp.events || []).forEach(ev => {
+        if (ev.type !== 'pose' || ev.contd || !ev.chantier || out[ev.chantier.id]) return;
+        const c = chantiers.find(x => x.id === ev.chantier.id);
+        if (seulsVerrouilles && !(c && isLockedChantier(c) && c.scheduledDate === iso)) return;
+        out[ev.chantier.id] = { iso, rang: rang++ };
+      });
+    }));
+    return out;
+  };
+
   const compute = async (force = false) => {
     setForceAll(force);
+    // « Optimiser » peut réorganiser les chantiers libres, pas les verrouillés : ils gardent leur rang.
+    const ordreVerrouilles = ordreDeLaSemaine(true);
     setComputing(true); setError(null); setApplied(false); setUngeocoded([]);
     // pool recalculé ici selon 'force' (ne dépend pas du re-render de setForceAll)
     // Interv. 2 d'un chantier en deux temps : on ne la planifie pas tant que l'interv. 1 n'a pas de date
@@ -4222,7 +4244,7 @@ ${sign}`,
       // Plus de fusion/cache séparé : une seule passe de calcul par binôme, comme pour tout le reste.
       if (mode === 'auto') {
         setProgress('zones géographiques');
-        const { byBin, pools, ungeocoded } = await autoAssignAndPlan(pool, binomes, depot, workday, days, unavail, {}, closures, validatedByBin, farRegionKm);
+        const { byBin, pools, ungeocoded } = await autoAssignAndPlan(pool, binomes, depot, workday, days, unavail, {}, closures, validatedByBin, farRegionKm, ordreVerrouilles);
         setSchedules(byBin);
         setUsedPools(binomes.map(b => ({ bin: b, pool: pools[b.id] || [] })));
         setUngeocoded(ungeocoded);
@@ -4239,7 +4261,7 @@ ${sign}`,
           for (const c of (validatedByBin[bin.id] || [])) {
             try { const p = await geocodeFr(c.address, c.postalCode, c.city); if (p) anchors.push({ date: c.scheduledDate, lat: p.lat, lon: p.lon }); } catch (e) {}
           }
-          next[bin.id] = await planWeek(bp, depot, workday, days, poseDaysISO, closures, anchors);
+          next[bin.id] = await planWeek(bp, depot, workday, days, poseDaysISO, closures, anchors, ordreVerrouilles);
         }
         setSchedules(next);
         setUsedPools(mPools);
@@ -4265,10 +4287,13 @@ ${sign}`,
   // C'est la différence avec « Optimiser la semaine », qui repart du lot COMPLET des chantiers à
   // planifier : après avoir retiré de la semaine les clients qui ont refusé, celui-ci les
   // reproposait aussitôt, ou en faisait entrer de nouveaux, alors que la semaine était calée.
-  // Les chantiers peuvent encore changer de JOUR à l'intérieur de la semaine (c'est le but : on
-  // recalcule la tournée), sauf ceux verrouillés — validés, date manuelle, heure imposée.
+  // Les chantiers libres peuvent encore changer de JOUR à l'intérieur de la semaine s'ils ne
+  // tiennent plus, mais chacun garde sa PLACE dans sa journée (ordre affiché) : le recalcul sert à
+  // mettre les trajets à jour, pas à refaire la tournée (demande client du 22/09). Les verrouillés
+  // — validés, date manuelle, heure imposée — ne changent jamais de jour.
   const recalculerTrajets = async () => {
     setComputing(true); setError(null); setApplied(false); setForceAll(false);
+    const ordreAffiche = ordreDeLaSemaine(false);
     try {
       const pool = dejaDansLaSemaine;
       if (!pool.length) {
@@ -4288,7 +4313,7 @@ ${sign}`,
         for (const c of bp.filter(x => x.status === 'valide')) {
           try { const g = await geocodeFr(c.address, c.postalCode, c.city); if (g) anchors.push({ date: c.scheduledDate, lat: g.lat, lon: g.lon }); } catch (e) {}
         }
-        next[bin.id] = await planWeek(bp, depot, workday, days, poseDaysISO, closures, anchors);
+        next[bin.id] = await planWeek(bp, depot, workday, days, poseDaysISO, closures, anchors, ordreAffiche);
       }
       setSchedules(next);
       setUsedPools(pools);
