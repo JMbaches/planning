@@ -5162,7 +5162,7 @@ ${sign}`,
                                     {valide ? '✓ VALIDÉ' : 'À CONFIRMER'}
                                   </div>
                                 )}
-                                <div style={{ fontSize: 14, fontWeight: 700, lineHeight: 1.2, paddingRight: 22, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.fixed ? '📌 ' : ''}{minToHHMM(ev.start)} {c.clientName}{ev.contd ? ' (suite)' : ''}</div>
+                                <div style={{ fontSize: 14, fontWeight: 700, lineHeight: 1.2, paddingRight: 22, whiteSpace: 'normal', overflowWrap: 'anywhere' }}>{ev.fixed ? '📌 ' : ''}{minToHHMM(ev.start)} {c.clientName}{ev.contd ? ' (suite)' : ''}</div>
                                 {rue && <div style={{ fontSize: 13, lineHeight: 1.25, whiteSpace: 'normal', overflowWrap: 'anywhere' }}>{rue}</div>}
                                 {cpVille && <div style={{ fontSize: 13, fontWeight: 700, fontFamily: 'Roboto Mono, monospace', lineHeight: 1.25, whiteSpace: 'normal' }}>{cpVille}</div>}
                                 {tel && <div style={{ fontSize: 13, fontFamily: 'Roboto Mono, monospace', lineHeight: 1.25, whiteSpace: 'nowrap' }}>☎ {tel}</div>}
