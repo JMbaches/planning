@@ -83,6 +83,9 @@
     body { background: white; }
     .no-print { display: none !important; }
     .print-page { page-break-after: always; }
+    /* À l'écran la grille est plus haute (72 px/h) pour la lisibilité ; à l'impression on la
+       ramène à la hauteur d'avant (54 px/h), pour garder une semaine par page. */
+    .grille-planning { zoom: 0.75; }
     .card, .btn-primary, .btn-accent, .btn-secondary { box-shadow: none !important; }
   }
 </style>
@@ -2352,7 +2355,8 @@ function App() {
     <div style={{ minHeight: '100vh' }}>
       <Header />
       <Nav tab={tab} setTab={setTab} />
-      <main className="max-w-7xl mx-auto px-6 pb-24">
+      {/* Le planning prend toute la largeur de l'écran (demande client) ; les autres écrans gardent leur colonne. */}
+      <main className={(tab === 'planning' ? '' : 'max-w-7xl ') + 'mx-auto px-6 pb-24'}>
         {tab === 'dashboard' && <Dashboard chantiers={chantiers} binomes={binomes} setTab={setTab} />}
         {tab === 'chantiers' && <Chantiers {...{chantiers, binomes, poseTypes, apiKey, upsert: upsertChantier, del: deleteChantier, showToast, setTab, archiveMonths}} pendingEdit={pendingEdit} onClearPendingEdit={() => setPendingEdit(null)} />}
         {tab === 'planning' && <EmploiDuTemps chantiers={chantiers} binomes={binomes} depot={depot} workday={workday} unavail={unavail} upsert={upsertChantier} showToast={showToast} setTab={setTab} setPendingEdit={setPendingEdit} poseTypes={poseTypes} farRegionKm={farRegionKm} />}
@@ -4824,7 +4828,7 @@ ${sign}`,
   const axisStartH = Math.floor(rawStart / 60);
   const axisEndH = Math.ceil(rawEnd / 60);
   const axisStartMin = axisStartH * 60;
-  const HOUR_PX = 54;
+  const HOUR_PX = 72; // assez haut pour un texte lisible et l'adresse complète (54 avant le 23/09)
   const PX = HOUR_PX / 60;
   const gridHeight = (axisEndH - axisStartH) * HOUR_PX;
   const hours = Array.from({ length: axisEndH - axisStartH + 1 }, (_, i) => axisStartH + i);
@@ -5036,7 +5040,7 @@ ${sign}`,
             if (!pool.length && !hasLocked) return null;
             const placed = res ? res.assignments.length : 0;
             return (
-              <section key={bin.id} className="print-page">
+              <section key={bin.id} className="print-page grille-planning">
                 <div className="flex items-center gap-3 mb-4 flex-wrap">
                   <div className="w-4 h-4 rounded-sm" style={{ background: bin.color }} />
                   <h2 className="font-display text-3xl font-semibold">{bin.name}</h2>
@@ -5047,7 +5051,7 @@ ${sign}`,
                   <div className="card p-6 text-sm" style={{ color: 'var(--ink-faint)' }}>—</div>
                 ) : (
                   <div className="card overflow-x-auto">
-                    <div style={{ minWidth: 760, display: 'grid', gridTemplateColumns: `52px repeat(${days.length}, 1fr)` }}>
+                    <div style={{ minWidth: 760, display: 'grid', gridTemplateColumns: `56px repeat(${days.length}, 1fr)` }}>
                       <div style={{ borderBottom: '1px solid var(--border)' }} />
                       {days.map(d => {
                         const isToday = toISO(d) === toISO(new Date());
@@ -5061,7 +5065,7 @@ ${sign}`,
 
                       <div style={{ position: 'relative', height: gridHeight }}>
                         {hours.map(h => (
-                          <div key={h} style={{ position: 'absolute', top: (h - axisStartH) * HOUR_PX - 6, right: 6, fontSize: 10, color: 'var(--ink-faint)', fontFamily: 'Roboto Mono, monospace' }}>{h}h</div>
+                          <div key={h} style={{ position: 'absolute', top: (h - axisStartH) * HOUR_PX - 8, right: 6, fontSize: 13, color: 'var(--ink-faint)', fontFamily: 'Roboto Mono, monospace' }}>{h}h</div>
                         ))}
                       </div>
                       {days.map(d => {
@@ -5113,17 +5117,17 @@ ${sign}`,
                                     h >= 28 && destLabel
                                       /* assez de place : deux lignes séparées */
                                       ? <>
-                                          <span style={{ fontSize: 9, color: veille ? 'var(--ink-soft)' : 'var(--ink-faint)', fontFamily: 'Roboto Mono, monospace', whiteSpace: 'nowrap', lineHeight: 1.2, padding: '0 2px' }}>{label}</span>
-                                          <span style={{ fontSize: 8, color: 'var(--ink-soft)', fontWeight: 600, whiteSpace: 'nowrap', lineHeight: 1.2, padding: '0 2px' }}>{destLabel}</span>
+                                          <span style={{ fontSize: 11, color: veille ? 'var(--ink-soft)' : 'var(--ink-faint)', fontFamily: 'Roboto Mono, monospace', whiteSpace: 'nowrap', lineHeight: 1.2, padding: '0 2px' }}>{label}</span>
+                                          <span style={{ fontSize: 11, color: 'var(--ink-soft)', fontWeight: 600, whiteSpace: 'nowrap', lineHeight: 1.2, padding: '0 2px' }}>{destLabel}</span>
                                         </>
                                       /* pas assez : tout sur une ligne */
-                                      : <span style={{ fontSize: 9, color: veille ? 'var(--ink-soft)' : 'var(--ink-faint)', fontFamily: 'Roboto Mono, monospace', whiteSpace: 'nowrap', lineHeight: 1.2, padding: '0 2px' }}>{destLabel ? `${label} ${destLabel}` : label}</span>
+                                      : <span style={{ fontSize: 11, color: veille ? 'var(--ink-soft)' : 'var(--ink-faint)', fontFamily: 'Roboto Mono, monospace', whiteSpace: 'nowrap', lineHeight: 1.2, padding: '0 2px' }}>{destLabel ? `${label} ${destLabel}` : label}</span>
                                   )}
                                 </div>;
                               }
                               if (ev.type === 'lunch') {
                                 return <div key={i} style={{ position: 'absolute', top, left: 2, right: 2, height: h, background: 'var(--cream)', border: '1px dashed var(--border-strong)', borderRadius: 3, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                  <span style={{ fontSize: 9, color: 'var(--ink-soft)' }}>Déjeuner</span>
+                                  <span style={{ fontSize: 12, color: 'var(--ink-soft)' }}>Déjeuner</span>
                                 </div>;
                               }
                               const c = ev.chantier;
@@ -5136,22 +5140,33 @@ ${sign}`,
                               const cpVille = [fullC.postalCode, fullC.city].filter(Boolean).join(' ');
                               const tel     = fullC.clientPhone || '';
                               const adrTip  = [rue, cpVille].filter(Boolean).join(', ');
+                              // Repère « validé » voyant d'un coup d'œil (demande client du 22/09) : contour +
+                              // pastille verts pour un créneau confirmé avec le client, pastille orange pour
+                              // ce qui reste à appeler.
+                              const valide = fullC.status === 'valide';
                               return <div key={i}
-                                title={`${minToHHMM(ev.start)}–${minToHHMM(ev.end)} · ${c.clientName} · ${c.type} · ${c.estimatedDuration}h${ev.fixed ? ' · heure fixée' : ''}${adrTip ? '\n📍 ' + adrTip : ''}${tel ? '\n☎ ' + tel : ''}\n— Cliquer pour ouvrir la fiche`}
+                                title={`${minToHHMM(ev.start)}–${minToHHMM(ev.end)} · ${c.clientName} · ${c.type} · ${c.estimatedDuration}h${valide ? ' · validé avec le client' : ' · à confirmer avec le client'}${ev.fixed ? ' · heure fixée' : ''}${adrTip ? '\n📍 ' + adrTip : ''}${tel ? '\n☎ ' + tel : ''}\n— Cliquer pour ouvrir la fiche`}
                                 onClick={() => { if (setPendingEdit && setTab) { setPendingEdit(fullC); setTab('chantiers'); } }}
-                                style={{ position: 'absolute', top, left: 2, right: 2, height: h, background: dc.bg, color: dc.ink, borderRadius: 3, borderLeft: `4px solid ${bin.color}`, padding: '3px 5px 3px 6px', overflow: 'hidden', boxShadow: 'var(--shadow-sm)', outline: ev.fixed ? '2px solid var(--accent)' : 'none', outlineOffset: ev.fixed ? '-2px' : 0, cursor: 'pointer' }}>
+                                style={{ position: 'absolute', top, left: 3, right: 3, height: h, background: dc.bg, color: dc.ink, borderRadius: 4, borderLeft: `5px solid ${bin.color}`, padding: '4px 8px 4px 8px', overflow: 'hidden', boxShadow: 'var(--shadow-sm)',
+                                  outline: valide ? `3px solid ${STATUTS.valide.color}` : ev.fixed ? '2px solid var(--accent)' : 'none', outlineOffset: (valide || ev.fixed) ? '-3px' : 0, cursor: 'pointer' }}>
                                 {!ev.contd && (
                                   <button
                                     onClick={e => { e.stopPropagation(); removeFromDay(fullC, bin.id, toISO(d)); }}
                                     title="Retirer du planning de ce jour (repasse à planifier, rien ne le remplace)"
-                                    style={{ position: 'absolute', top: 2, right: 2, width: 14, height: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, lineHeight: 1, fontSize: 10, background: 'rgba(255,255,255,0.55)', border: 'none', borderRadius: 3, color: dc.ink, cursor: 'pointer', zIndex: 1 }}
+                                    style={{ position: 'absolute', top: 4, right: 4, width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, lineHeight: 1, fontSize: 13, background: 'rgba(255,255,255,0.6)', border: 'none', borderRadius: 4, color: dc.ink, cursor: 'pointer', zIndex: 1 }}
                                   >✕</button>
                                 )}
-                                <div style={{ fontSize: 10, fontWeight: 700, lineHeight: 1.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.fixed ? '📌 ' : ''}{minToHHMM(ev.start)} {c.clientName}{ev.contd ? ' (suite)' : ''}</div>
-                                {rue && <div style={{ fontSize: 9, opacity: 0.9, lineHeight: 1.15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{rue}</div>}
-                                {cpVille && <div style={{ fontSize: 9, fontWeight: 700, fontFamily: 'Roboto Mono, monospace', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{cpVille}</div>}
-                                {tel && <div style={{ fontSize: 9, fontFamily: 'Roboto Mono, monospace', lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>☎ {tel}</div>}
-                                {h > 46 && <div style={{ fontSize: 8, opacity: 0.7, lineHeight: 1.1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.type} · {c.estimatedDuration}h</div>}
+                                {!ev.contd && (
+                                  <div style={{ display: 'inline-block', marginBottom: 3, padding: '1px 7px', borderRadius: 10, fontSize: 11, fontWeight: 800, letterSpacing: '0.03em',
+                                    background: valide ? STATUTS.valide.color : '#FFF1D6', color: valide ? '#fff' : '#8B5E00', border: valide ? 'none' : '1px solid #E0B45A' }}>
+                                    {valide ? '✓ VALIDÉ' : 'À CONFIRMER'}
+                                  </div>
+                                )}
+                                <div style={{ fontSize: 14, fontWeight: 700, lineHeight: 1.2, paddingRight: 22, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ev.fixed ? '📌 ' : ''}{minToHHMM(ev.start)} {c.clientName}{ev.contd ? ' (suite)' : ''}</div>
+                                {rue && <div style={{ fontSize: 13, lineHeight: 1.25, whiteSpace: 'normal', overflowWrap: 'anywhere' }}>{rue}</div>}
+                                {cpVille && <div style={{ fontSize: 13, fontWeight: 700, fontFamily: 'Roboto Mono, monospace', lineHeight: 1.25, whiteSpace: 'normal' }}>{cpVille}</div>}
+                                {tel && <div style={{ fontSize: 13, fontFamily: 'Roboto Mono, monospace', lineHeight: 1.25, whiteSpace: 'nowrap' }}>☎ {tel}</div>}
+                                <div style={{ fontSize: 11, opacity: 0.75, lineHeight: 1.2, marginTop: 1, whiteSpace: 'normal' }}>{c.type} · {c.estimatedDuration}h</div>
                               </div>;
                             })}
                           </div>
@@ -5159,7 +5174,7 @@ ${sign}`,
                       })}
 
                       <div style={{ borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center', paddingRight: 6 }}>
-                        <span style={{ fontSize: 8, color: 'var(--ink-faint)', fontFamily: 'Roboto Mono, monospace', textTransform: 'uppercase', letterSpacing: '0.03em', lineHeight: 1.4, textAlign: 'right' }}>fin<br />route</span>
+                        <span style={{ fontSize: 10, color: 'var(--ink-faint)', fontFamily: 'Roboto Mono, monospace', textTransform: 'uppercase', letterSpacing: '0.03em', lineHeight: 1.4, textAlign: 'right' }}>fin<br />route</span>
                       </div>
                       {(() => { const hasReturnDay = Object.values(res.dayPlans || {}).some(p => p && p.returnOnly); return days.map(d => {
                         const plan = res.dayPlans[toISO(d)];
@@ -5175,10 +5190,10 @@ ${sign}`,
                           <div key={'f' + toISO(d)} className="p-1 text-center" style={{ borderLeft: '1px solid var(--border)', borderTop: '1px solid var(--border)' }}>
                             {plan
                               ? (plan.returnOnly
-                                  ? <span style={{ fontSize: 10, color: 'var(--ink-faint)', fontFamily: 'Roboto Mono, monospace', lineHeight: 1.3 }} title="Retour au siège le lendemain de la dernière pose">
+                                  ? <span style={{ fontSize: 12, color: 'var(--ink-faint)', fontFamily: 'Roboto Mono, monospace', lineHeight: 1.3 }} title="Retour au siège le lendemain de la dernière pose">
                                       retour dépôt<br />{fmtDuration(plan.approachSec)} route
                                     </span>
-                                  : <span title={routeTitle} style={{ fontSize: 10, color: plan.oversized ? 'var(--accent)' : 'var(--ink-faint)', fontFamily: 'Roboto Mono, monospace', lineHeight: 1.3, cursor: 'help' }}>
+                                  : <span title={routeTitle} style={{ fontSize: 12, color: plan.oversized ? 'var(--accent)' : 'var(--ink-faint)', fontFamily: 'Roboto Mono, monospace', lineHeight: 1.3, cursor: 'help' }}>
                                       fin {minToHHMM(plan.endMin)}{plan.oversized ? ' ⚠' : ''}<br />{fmtDuration((plan.approachSec || 0) + (plan.totalDriveSec || 0) + (plan.siegeReturnSec || 0))} route
                                       {!plan.isLastPoseDay && (plan.staysOnSite || plan.siegeReturnSec > 0) && (
                                         <><br /><span style={{ color: plan.staysOnSite ? 'var(--ink-faint)' : 'var(--teal-deep)' }}>
