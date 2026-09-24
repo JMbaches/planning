@@ -717,6 +717,9 @@ const I = {
 // donc par une seule équipe. Sert de valeur par défaut au réglage « Regroupement des secteurs
 // éloignés » (Paramètres). 150 km ≈ la largeur d'une région : le 67 et le 57 tiennent dedans.
 const DEFAULT_FAR_REGION_KM = 150;
+// Au-delà de cette distance du siège, un chantier est « lointain » : il se fait dans un déplacement
+// dédié (nuits sur place), jamais ajouté en bout d'une journée locale.
+const FAR_KM_DEPOT = 250;
 const DEFAULT_BINOMES = [
   { id: 'A', name: 'Binôme A', members: ['Poseur 1', 'Poseur 2'], color: '#1B5FCC', phone: '', email: '' },
   { id: 'B', name: 'Binôme B', members: ['Poseur 3', 'Poseur 4'], color: '#4E9D8E', phone: '', email: '' },
@@ -1233,7 +1236,11 @@ function injectLunch(events, lunchStart, lunchDur) {
 // planning affiché. Un chantier dont la place est connue SUR LE MÊME JOUR la reprend : l'ordre
 // n'est plus redécidé par le calcul de tournée, qui ne donne pas toujours le même résultat (un
 // chantier validé changeait de rang au « Recalculer les trajets », cf. mail client du 22/09).
-async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures = [], validatedAnchors = [], ordreEnregistre = null) {
+async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures = [], validatedAnchors = [], ordreEnregistre = null, farRegionKm = DEFAULT_FAR_REGION_KM) {
+  // Chantiers d'une zone lointaine qui attend une autre semaine (l'équipe a déjà son déplacement
+  // lointain cette semaine, cf. autoAssignAndPlan) : directement « non casés », jamais posés.
+  const enAttenteZone = poolInput.filter(c => c._attenteZone);
+  poolInput = poolInput.filter(c => !c._attenteZone);
   // Séparer le pool selon la fenêtre :
   // - trop tôt (notBefore dans le futur) → exclu, contrainte dure
   // - en retard (notAfter dépassé) → ajouté en fin de pool, contrainte souple
@@ -1296,6 +1303,19 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
   const legFromDepot = (a) => { if (!hasDepot) return 0; const v = cell(0, a + 1); return v == null ? DEFAULT_LEG : v; };
   const legToDepot = (a) => { if (!hasDepot) return 0; const v = cell(a + 1, 0); return v == null ? DEFAULT_LEG : v; };
 
+  // Cohérence géographique d'une journée : un chantier LOINTAIN (> FAR_KM_DEPOT du siège) ne se fait
+  // qu'avec des arrêts de son secteur (< farRegionKm), et un chantier local ne suit pas un arrêt
+  // lointain. Sans ça, faute de voisin, le plus proche restant était pris quelle que soit la
+  // distance : « Lachassagne (69) → Brunstatt (68) » le même jour, 4 h de route (mail du 22/09).
+  const secteurKm = Number(farRegionKm) > 0 ? Number(farRegionKm) : DEFAULT_FAR_REGION_KM;
+  const estLointain = (g) => !!(g && depotGeo && haversineKm(g, depotGeo) > FAR_KM_DEPOT);
+  const memeSecteur = (a, b) => {
+    const gA = geoByIdx[a], gB = geoByIdx[b];
+    if (!gA || !gB || !depotGeo) return true;
+    if (estLointain(gA) || estLointain(gB)) return haversineKm(gA, gB) <= secteurKm;
+    return true;
+  };
+
   // ---- DÉCOUPAGE EN JOURNÉES PLEINES ----
   // Objectif : remplir chaque jour au maximum SANS finir trop tard. On raisonne en HEURE DE FIN réelle
   // (déjeuner inclus), pas en volume abstrait : on n'ajoute un chantier que si la journée finit ≤ 17h30.
@@ -1317,16 +1337,17 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
     return t;
   };
 
-  // Remplit jour par jour. On ajoute un chantier au jour courant tant que la journée ne DÉMARRE pas
-  // ce chantier après 18h : même s'il finit après 18h, on le commence aujourd'hui et le builder
-  // coupera la pose (le reste reprend demain matin). On ne laisse donc plus d'après-midi vides.
-  const dayStartTimeFor = (stops, lastIdx) => {
-    // heure de DÉBUT du dernier chantier ajouté (approche + poses précédentes + trajets + déjeuner traversé)
-    let t = dayStart + (legFromDepot(stops[0]) || 0) / 60;
+  // Heure de FIN du dernier chantier d'une journée composée de `stops` (approche depuis `depuis`, la
+  // veille, ou depuis le dépôt ; trajets ; poses). Le déjeuner est compté comme injectLunch le posera
+  // ensuite : une heure de plus dès que la journée franchit midi, même pendant un trajet (avant, il
+  // n'était compté que s'il tombait pendant une pose — un chantier jugé « tenir » était reporté).
+  const finDeJourneeSi = (stops, depuis) => {
+    let t = dayStart, dej = !lunchDur;
+    const avancer = (d) => { if (!dej && d > 0 && t + d > lunchStart) { t += lunchDur; dej = true; } t += d; };
+    avancer(((depuis != null ? legBetween(depuis, stops[0]) : legFromDepot(stops[0])) || 0) / 60);
     for (let k = 0; k < stops.length; k++) {
-      if (k > 0) t += (legBetween(stops[k - 1], stops[k]) || 0) / 60;
-      if (k === stops.length - 1) return t; // début du dernier
-      const b = t; t += poseSecOf(stops[k]) / 60; if (b < lunchStart && t > lunchStart) t += lunchDur;
+      if (k > 0) avancer((legBetween(stops[k - 1], stops[k]) || 0) / 60);
+      avancer(poseSecOf(stops[k]) / 60);
     }
     return t;
   };
@@ -1415,20 +1436,72 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
       const iso = poseList[di];
       if (!iso) return null;
       const prevISO = toISO(addDays(parseISO(iso), -1)), nextISO = toISO(addDays(parseISO(iso), 1));
-      const anchor = validatedAnchors.find(a => a.date === prevISO) || validatedAnchors.find(a => a.date === nextISO);
+      // Le lendemain d'abord : c'est là que l'équipe doit être demain, la journée vide sert à s'en
+      // rapprocher (cas réel : lundi en Auvergne, mercredi validé en Meuse — le mardi partait sur un
+      // chantier du Gard, tiré vers l'Auvergne, et restait vide).
+      const anchor = validatedAnchors.find(a => a.date === nextISO) || validatedAnchors.find(a => a.date === prevISO);
       return anchor ? { lat: anchor.lat, lon: anchor.lon } : null;
     });
 
     const remaining = order.filter(idx => !placedIdx.has(idx));
-    const tryFit = (ch, idx) => (dayStartTimeFor([...ch.stops, idx], idx) + 30) <= DAY_END;
+    // depuis : dernier arrêt de la veille. Le premier trajet du jour part de là (nuit sur place), pas
+    // du dépôt — sinon un chantier à 4 h de route de la veille paraissait tenir et était reporté ensuite.
+    // Le chantier doit FINIR avant la coupure du soir (déjeuner compris) : buildDay reporte toute pose
+    // qui dépasse, donc en choisir une qui ne fait que « commencer » avant perdait la place du jour.
+    const tryFit = (ch, idx, depuis) => finDeJourneeSi([...ch.stops, idx], depuis) <= DAY_END;
+    // Journée vide : si le lendemain est lointain, on reste dans son secteur (jamais « Mulhouse →
+    // Drôme → Mulhouse ») ; sinon tout convient. Journée commencée : même secteur que le dernier arrêt.
+    const compatibleAvecJour = (ch, idx, di) => {
+      if (ch.stops.length) return memeSecteur(ch.stops[ch.stops.length - 1], idx);
+      const demain = chunks[di + 1];
+      if (demain && demain.stops.length && estLointain(geoByIdx[demain.stops[0]])) return memeSecteur(demain.stops[0], idx);
+      return true;
+    };
     // Jours PASSÉS de la semaine affichée : on n'y place JAMAIS de nouveau chantier flottant (on ne
     // planifie qu'à partir d'aujourd'hui inclus). Les chantiers déjà VERROUILLÉS (validés) sur un jour
     // passé restent en place — ils sont déjà placés plus haut et ne doivent pas basculer en « à reporter ».
     const todayISO = toISO(new Date());
+
+    // JOURS DU DÉPLACEMENT LOINTAIN. Sans réservation, chaque journée vide se remplissait en partant
+    // du dépôt : les chantiers locaux, plus proches, prenaient toute la semaine et la zone lointaine
+    // confiée à l'équipe n'était jamais posée (cas réel S44, Lorraine). On réserve donc à la zone
+    // lointaine les jours qu'il lui faut — autour d'un jour lointain déjà verrouillé, sinon en fin de
+    // semaine (aller la veille, retour le vendredi) — et les autres jours restent au local.
+    const loinIdx = (idx) => estLointain(geoByIdx[idx]);
+    const typeJour = chunks.map(ch => ch.stops.some(loinIdx) ? 'loin' : (ch.stops.length ? 'local' : null));
+    if (remaining.some(loinIdx)) {
+      const hLoin = [...remaining, ...chunks.flatMap(ch => ch.stops)].filter(loinIdx).reduce((s, i) => s + poseSecOf(i) / 3600, 0);
+      let manque = Math.ceil((hLoin + 5) / 8) - typeJour.filter(t => t === 'loin').length; // ~8 h par jour, ~5 h d'approche
+      // Le déplacement est un BLOC de jours consécutifs, sans journée locale verrouillée au milieu
+      // (jamais « lundi en Lorraine, mardi dans le Var »). Blocs possibles = suites de jours sans
+      // local verrouillé ; on prend celui qui contient déjà du lointain verrouillé, sinon le dernier
+      // (fin de semaine). S'il n'a pas assez de jours, le reste de la zone attend (non casé).
+      const blocs = []; let courant = [];
+      typeJour.forEach((t, i) => { if (t === 'local') { if (courant.length) blocs.push(courant); courant = []; } else courant.push(i); });
+      if (courant.length) blocs.push(courant);
+      const nbLoin = (b) => b.filter(i => typeJour[i] === 'loin').length;
+      let bloc = blocs.length ? blocs.reduce((best, b) => (nbLoin(b) > nbLoin(best) || (nbLoin(b) === nbLoin(best) && b[0] > best[0])) ? b : best) : [];
+      // Sans lointain verrouillé, le bloc doit finir la semaine : un déplacement coincé entre deux
+      // journées locales (mercredi à Dijon, jeudi dans le Var) n'a pas de sens — la zone attend.
+      if (!nbLoin(bloc) && bloc.length && bloc[bloc.length - 1] !== chunks.length - 1) bloc = [];
+      const existants = bloc.filter(i => typeJour[i] === 'loin');
+      const libres = bloc.filter(i => typeJour[i] == null && !(poseList[i] && poseList[i] < todayISO));
+      // autour des jours lointains existants, sinon en partant de la fin du bloc
+      const eloignement = (i) => existants.length ? Math.min(...existants.map(j => Math.abs(j - i))) : bloc[bloc.length - 1] - i;
+      libres.sort((a, b) => eloignement(a) - eloignement(b) || b - a);
+      for (const i of libres) { if (manque <= 0) break; typeJour[i] = 'loin'; manque--; }
+    }
+    const typeOk = (di, idx) => (typeJour[di] === 'loin') === loinIdx(idx);
+
     for (let di = 0; di < chunks.length; di++) {
       const iso = poseList[di];
       const ch = chunks[di];
       const isPastDay = !!iso && iso < todayISO;
+      const veille = di > 0 ? chunks[di - 1] : null;
+      const depuisVeille = veille && veille.stops.length ? veille.stops[veille.stops.length - 1] : null;
+      // Jour réservé au lointain resté sans rien de lointain qui tienne : ouvert au local (mieux qu'un
+      // jour vide). Un jour local, lui, n'accueille jamais de lointain.
+      let typeStrict = true;
       while (!isPastDay && remaining.length) {
         const lastGeo = ch.stops.length ? geoByIdx[ch.stops[ch.stops.length - 1]] : dayAnchorGeo[di];
         // Référence pour juger de la proximité : le dernier arrêt du jour, sinon (jour encore vide,
@@ -1438,11 +1511,13 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
         const refGeo = lastGeo || depotGeo;
         const fitting = [];
         remaining.forEach((idx, i) => {
-          if (!dateAllowed(pool[idx], iso) || !tryFit(ch, idx)) return;
+          if (!dateAllowed(pool[idx], iso) || !tryFit(ch, idx, depuisVeille) || !compatibleAvecJour(ch, idx, di)) return;
+          if (typeStrict ? !typeOk(di, idx) : loinIdx(idx)) return;
           const g = geoByIdx[idx];
           const d = (!refGeo || !g) ? 0 : haversineKm(refGeo, g);
           fitting.push({ i, idx, d });
         });
+        if (!fitting.length && typeStrict && typeJour[di] === 'loin' && !ch.stops.length) { typeStrict = false; continue; }
         if (!fitting.length) break;
         const bestDist = Math.min(...fitting.map(f => f.d));
         // Routage réel disponible → on fait confiance au temps de trajet réel (déjà vérifié par
@@ -1489,6 +1564,7 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
   // affectation aux jours de la semaine + construction des horaires
   const dayPlans = {}; const assignments = []; const overflow = [];
   lockedOrphans.forEach(idx => overflow.push(pool[idx]));
+  enAttenteZone.forEach(c => overflow.push(c));
   unplacedFloating.forEach(idx => overflow.push(pool[idx]));
   // morningTravel[di] : trajet à poser le MATIN du jour di.
   //  - { sec, returnDepot:false, fromDepot:false } : liaison "nuit sur place" reportée (déborde 18h la veille)
@@ -1540,24 +1616,30 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
       // b) chantiers du jour : on place tout, PUIS on tronque à 18h après insertion du déjeuner.
       //    La 1re pose qui dépasse 18h est coupée à 18h (reste demain) ; les suivantes partent demain.
       const deferredK = new Set(); // déclaré ici pour être accessible dans la pré-vérification
+      // Un chantier VERROUILLÉ (validé, heure imposée, date manuelle) ne change jamais de jour : il
+      // est posé même si la journée déborde (elle est alors signalée trop longue). Avant, tout ce qui
+      // débordait partait au lendemain — un validé à heure imposée, interdit sur tout autre jour,
+      // sortait alors de la semaine sans prévenir (cas réel : Belleville-sur-Meuse, 21/10, après une
+      // veille en Auvergne). Seuls les chantiers LIBRES sont reportés.
+      const verrouK = (k) => k != null && isLockedChantier(pool[chunk.stops[k]]);
+      let deborde = false, prevK = null;
       for (let k = 0; k < chunk.stops.length; k++) {
-        const legMin = k > 0 ? (chunk.legs[k] || 0) / 60 : 0;
         const ch = pool[chunk.stops[k]];
+        const verrou = verrouK(k);
+        // Une fois la journée pleine, les libres suivants partent au lendemain (on ne recule jamais).
+        if (deborde && !verrou) { deferredK.add(k); continue; }
+        // Trajet depuis le dernier arrêt réellement posé (un libre reporté entre deux ne compte pas).
+        const legMin = prevK == null ? 0 : (prevK === k - 1 ? (chunk.legs[k] || 0) : legBetween(chunk.stops[prevK], chunk.stops[k])) / 60;
         const durMin = (ch.estimatedDuration || 0) * 60;
         // Vérifier si la pose peut tenir dans la journée AVEC le déjeuner éventuel
         const startAfterTravel = t + legMin;
         const lunchHit = lunchDur && startAfterTravel < lunchStart && startAfterTravel + durMin > lunchStart;
         const realEnd = startAfterTravel + durMin + (lunchHit ? lunchDur : 0);
-        if (realEnd > DAY_END) {
-          // Ne tient pas → reporter sans la pousser dans events. Les stops SUIVANTS aussi (on ne
-          // recule jamais dans la journée) — sinon ils resteraient dans chunk.stops sans jamais être
-          // ni posés ni reportés, et disparaîtraient silencieusement (chantier perdu).
-          for (let j = k; j < chunk.stops.length; j++) deferredK.add(j);
-          break;
-        }
+        if (realEnd > DAY_END && !verrou) { deborde = true; deferredK.add(k); continue; }
         if (legMin > 0) { events.push({ type: 'travel', start: t, end: t + legMin, _k: k }); t += legMin; }
         events.push({ type: 'pose', start: t, end: t + durMin, chantier: ch, _k: k, _idx: chunk.stops[k] });
         t += durMin;
+        prevK = k;
         localAssign.push({ id: ch.id, iso, order: k, geo: geoByIdx[chunk.stops[k]] || null });
       }
       // insertion du déjeuner (décale ce qui suit) — l'heure de fin réelle est alors connue
@@ -1566,6 +1648,8 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
       // TRONCATURE STRICTE À 18h : on parcourt dans l'ordre ; dès qu'un évènement dépasse 18h, on coupe.
       const capped = [];
       for (const ev of events) {
+        // Pose d'un verrouillé (et le trajet qui y mène) : gardée même au-delà de 18h30, jamais reportée.
+        if (ev._k != null && verrouK(ev._k)) { capped.push(ev); continue; }
         if (ev.start >= DAY_END) {                      // commence après 18h → entièrement reporté
           if (ev.type === 'pose') deferredK.add(ev._k);
           continue;
@@ -1600,6 +1684,11 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
         if (ni < usablePoseDays) {
           chunks[ni] = chunks[ni] || { stops: [], legs: [] };
           const nextCh = chunks[ni];
+          // Un report ne va au lendemain que s'il est du même secteur que ce qui y est déjà prévu
+          // (un local ne part pas sur une journée lointaine, et inversement) ; sinon non casé.
+          for (let m = movedStops.length - 1; m >= 0; m--) {
+            if (nextCh.stops.length && !memeSecteur(nextCh.stops[0], movedStops[m])) { overflow.push(pool[movedStops[m]]); movedStops.splice(m, 1); }
+          }
           // Insérer les reports APRÈS les chantiers verrouillés du lendemain (heure fixe / date
           // manuelle / validé) : un report ne doit jamais pouvoir déplacer un verrouillé de sa place.
           let insertAt = 0;
@@ -1738,6 +1827,9 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
         if (ni < usablePoseDays) {
           chunks[ni] = chunks[ni] || { stops: [], legs: [] };
           const nextCh = chunks[ni];
+          for (let m = reportees.length - 1; m >= 0; m--) {
+            if (nextCh.stops.length && !memeSecteur(nextCh.stops[0], reportees[m])) { overflow.push(pool[reportees[m]]); reportees.splice(m, 1); }
+          }
           let insertAt = 0;
           while (insertAt < nextCh.stops.length && isLockedChantier(pool[nextCh.stops[insertAt]])) insertAt++;
           nextCh.stops = [...nextCh.stops.slice(0, insertAt), ...reportees, ...nextCh.stops.slice(insertAt)];
@@ -1814,7 +1906,9 @@ async function planWeek(poolInput, depot, workday, days, poseDaysISO, closures =
     localAssign.forEach(a => assignments.push(a));
     const totalDriveSec = chunk.legs.slice(1).reduce((s, x) => s + (x || 0), 0);
     // Avec le découpage à 18h, une pose ne dépasse 18h que si elle est seule et trop longue ce jour-là.
-    const oversized = !!chunk.oversized || endMin > DAY_END + 1;
+    // Seulement si une pose reste vraiment ce jour-là : une journée dont tout a été reporté n'est pas
+    // « trop longue » (l'indicateur du remplissage restait affiché sur des journées vides).
+    const oversized = events.some(e => e.type === 'pose') && (!!chunk.oversized || endMin > DAY_END + 1);
     // Info retour siège (affichée partout) : durée dernier chantier → siège, et si on rentre ou dort sur place.
     const lastStopId = chunk.stops[chunk.stops.length - 1];
     const staysOnSite = !isLastPoseDay && !eveningReturn;
@@ -2084,7 +2178,7 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
   if (depot && (depot.address || depot.city || depot.postalCode)) {
     try { depotPt = await geocodeFr(depot.address, depot.postalCode, depot.city); } catch (e) {}
   }
-  const FAR_KM = 250;       // au-delà de 250 km du siège = chantier "lointain"
+  const FAR_KM = FAR_KM_DEPOT; // au-delà de 250 km du siège = chantier "lointain"
   // Deux chantiers lointains distants de moins de CLUSTER_KM partent avec la MÊME équipe, dans
   // le même déplacement. Réglable dans Paramètres ; 150 km par défaut.
   // Cette valeur était figée à 80 km, ce qui séparait des secteurs pourtant desservis par un seul
@@ -2116,30 +2210,53 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
   const WEEK_POSE_BUDGET = 4 * POSE_HOURS_PER_DAY; // ~32 h de pose posables/semaine
 
   // 1) Séparer chantiers PROCHES et LOINTAINS (par rapport au siège). On EXCLUT les fixés (déjà affectés).
+  const estLoin = (i) => depotPt ? haversineKm(pts[i], depotPt) > FAR_KM : false;
   const proche = [], lointain = [];
   valid.forEach((c, i) => {
     if (fixedForced.has(i)) return; // urgence à heure fixe : binôme déjà imposé
-    const far = depotPt ? haversineKm(pts[i], depotPt) > FAR_KM : false;
-    (far ? lointain : proche).push(i);
+    (estLoin(i) ? lointain : proche).push(i);
   });
+  // Verrouillés lointains (validés, date manuelle…) : ils disent déjà quelle équipe monte dans quel
+  // secteur cette semaine. Ils entrent dans le regroupement par zone, pour que les chantiers libres
+  // du même secteur partent avec cette équipe au lieu d'être envoyés à l'autre ou laissés de côté
+  // (cas réel S43 : équipe A en Alsace mer.-jeu., Dijon et Byans à planifier restaient non casés).
+  const lointainVerrou = [...fixedForced].filter(estLoin);
+  const zoneEnAttente = new Set(); // chantiers libres d'une zone qui attend une autre semaine
 
   // 2) LOINTAINS D'ABORD (priorité). On regroupe par zone (Paris = une zone), et chaque zone ENTIÈRE
   //    va à UN seul binôme — jamais deux équipes sur la même zone lointaine. On choisit le binôme le
   //    moins chargé. Objectif : réserver la semaine de ce binôme à son déplacement lointain.
   const farLoadByBin = new Array(k).fill(0); // part de charge lointaine par binôme
+  lointainVerrou.forEach(i => { farLoadByBin[assign[i]] += (valid[i].estimatedDuration || 0); });
   if (lointain.length) {
+    const tousLoin = [...lointain, ...lointainVerrou];
     const zoneOf = {}; let nz = 0;
-    lointain.forEach(i => { if (zoneOf[i] === undefined) {
+    tousLoin.forEach(i => { if (zoneOf[i] === undefined) {
       const stack = [i]; zoneOf[i] = nz;
       while (stack.length) { const a = stack.pop();
-        lointain.forEach(j => { if (zoneOf[j] === undefined && haversineKm(pts[a], pts[j]) < CLUSTER_KM) { zoneOf[j] = nz; stack.push(j); } });
+        tousLoin.forEach(j => { if (zoneOf[j] === undefined && haversineKm(pts[a], pts[j]) < CLUSTER_KM) { zoneOf[j] = nz; stack.push(j); } });
       }
       nz++;
     }});
     const zones = Array.from({ length: nz }, () => []);
-    lointain.forEach(i => zones[zoneOf[i]].push(i));
-    // zones les plus grosses d'abord (pour bien réserver une semaine entière au plus gros déplacement)
-    zones.sort((A, B) => B.reduce((s, i) => s + (valid[i].estimatedDuration || 0), 0) - A.reduce((s, i) => s + (valid[i].estimatedDuration || 0), 0));
+    tousLoin.forEach(i => zones[zoneOf[i]].push(i));
+    const heures = (liste) => liste.reduce((s, i) => s + (valid[i].estimatedDuration || 0), 0);
+    // Équipes déjà engagées dans une zone par leurs verrouillés. Une même zone peut en avoir deux (le
+    // chaînage de proche en proche relie Alsace et Lorraine) : chaque chantier libre rejoint alors
+    // l'équipe dont un verrouillé de la zone est le plus proche de lui.
+    const verrousDe = (zone) => zone.filter(i => fixedForced.has(i));
+    const equipeProche = (zone, i) => {
+      let best = -1, bestD = Infinity;
+      verrousDe(zone).forEach(j => { const d = haversineKm(pts[i], pts[j]); if (d < bestD) { bestD = d; best = assign[j]; } });
+      return best;
+    };
+    // Un seul déplacement lointain par équipe et par semaine : une équipe engagée par ses verrouillés
+    // l'est déjà. Une zone de plus attend une semaine où une équipe est libre, au lieu d'envoyer la
+    // même équipe de Mulhouse à Paris puis en Charente dans la semaine (cas réel S42).
+    const aSonDeplacement = new Array(k).fill(false);
+    zones.forEach(z => verrousDe(z).forEach(j => { aSonDeplacement[assign[j]] = true; }));
+    // zones déjà engagées d'abord, puis les plus grosses (pour réserver une semaine au plus gros déplacement)
+    zones.sort((A, B) => (verrousDe(B).length > 0) - (verrousDe(A).length > 0) || heures(B) - heures(A));
     // AIMANT SECTEUR : si un chantier VALIDÉ (déjà fixé sur un binôme) est dans le même secteur qu'une
     // zone lointaine, TOUTE la zone rejoint CE binôme — pour qu'un long déplacement serve à plusieurs
     // poses du coin, pas à une seule. Sinon, la zone va au binôme le moins chargé (comportement d'origine).
@@ -2152,11 +2269,29 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
       return (bestBi >= 0 && bestDist <= SECTOR_ANCHOR_KM) ? bestBi : -1;
     };
     zones.forEach(zone => {
-      const anchored = zoneAnchoredBin(zone);
-      let best;
-      if (anchored >= 0) best = anchored;
-      else { best = 0; for (let b = 1; b < k; b++) if (loadByBin[b] < loadByBin[best]) best = b; }
-      zone.forEach(i => { assign[i] = best; const h = (valid[i].estimatedDuration || 0); loadByBin[best] += h; farLoadByBin[best] += h; });
+      const libres = zone.filter(i => !fixedForced.has(i));
+      if (!libres.length) return;
+      if (verrousDe(zone).length) {
+        libres.forEach(i => { const b = equipeProche(zone, i); assign[i] = b; const h = (valid[i].estimatedDuration || 0); loadByBin[b] += h; farLoadByBin[b] += h; });
+        return;
+      }
+      let best = -1;
+      // Aimant secteur, sauf pour une équipe qui a déjà son déplacement lointain cette semaine.
+      { const anchored = zoneAnchoredBin(zone); if (anchored >= 0 && !aSonDeplacement[anchored]) best = anchored; }
+      if (best < 0) {
+        // Équipe la moins chargée parmi celles qui n'ont pas encore de déplacement lointain.
+        for (let b = 0; b < k; b++) if (!aSonDeplacement[b] && (best < 0 || loadByBin[b] < loadByBin[best])) best = b;
+      }
+      if (best < 0) {
+        // Toutes les équipes ont déjà leur déplacement : la zone attend. Ses chantiers sont confiés à
+        // l'équipe la moins chargée uniquement pour apparaître dans ses « non casés ».
+        let moins = 0; for (let b = 1; b < k; b++) if (loadByBin[b] < loadByBin[moins]) moins = b;
+        // Un verrouillé sans équipe (date manuelle / heure imposée) n'attend jamais : il garde son jour.
+        libres.forEach(i => { assign[i] = moins; if (!isLockedChantier(valid[i])) zoneEnAttente.add(i); });
+        return;
+      }
+      aSonDeplacement[best] = true;
+      libres.forEach(i => { assign[i] = best; const h = (valid[i].estimatedDuration || 0); loadByBin[best] += h; farLoadByBin[best] += h; });
     });
   }
 
@@ -2226,13 +2361,13 @@ async function autoAssignAndPlan(allChantiers, binomes, depot, workday, days, un
   // 4 premiers jours de la semaine (lun→jeu) = jours de pose candidats
   const candidateDays = days.slice(0, 4).map(d => toISO(d));
   for (let ci = 0; ci < binomes.length; ci++) {
-    const pool = valid.filter((_, i) => assign[i] === ci);
+    const pool = valid.map((c, i) => zoneEnAttente.has(i) ? { ...c, _attenteZone: true } : c).filter((_, i) => assign[i] === ci);
     pools[binomes[ci].id] = pool;
     // Jours réellement posables = candidats non bloqués par une indisponibilité. Les jours des chantiers
     // validés RESTENT posables : le validé y est placé comme arrêt verrouillé et le reste du jour se
     // remplit normalement (plus de jour « réservé » exclu du calcul).
     const poseDaysISO = candidateDays.filter(iso => !isUnavailable(unavail, binomes[ci].id, iso));
-    if (pool.length) byBin[binomes[ci].id] = await planWeek(pool, depot, workday, days, poseDaysISO, closures, validatedAnchors[binomes[ci].id] || [], ordreEnregistre);
+    if (pool.length) byBin[binomes[ci].id] = await planWeek(pool, depot, workday, days, poseDaysISO, closures, validatedAnchors[binomes[ci].id] || [], ordreEnregistre, CLUSTER_KM);
   }
   const ungeocoded = allChantiers.filter(c => !valid.includes(c));
   return { byBin, pools, ungeocoded };
@@ -4312,7 +4447,7 @@ ${sign}`,
           for (const c of (validatedByBin[bin.id] || [])) {
             try { const p = await geocodeFr(c.address, c.postalCode, c.city); if (p) anchors.push({ date: c.scheduledDate, lat: p.lat, lon: p.lon }); } catch (e) {}
           }
-          next[bin.id] = await planWeek(bp, depot, workday, days, poseDaysISO, closures, anchors, ordreVerrouilles);
+          next[bin.id] = await planWeek(bp, depot, workday, days, poseDaysISO, closures, anchors, ordreVerrouilles, farRegionKm);
         }
         setSchedules(next);
         setUsedPools(mPools);
@@ -4364,7 +4499,7 @@ ${sign}`,
         for (const c of bp.filter(x => x.status === 'valide')) {
           try { const g = await geocodeFr(c.address, c.postalCode, c.city); if (g) anchors.push({ date: c.scheduledDate, lat: g.lat, lon: g.lon }); } catch (e) {}
         }
-        next[bin.id] = await planWeek(bp, depot, workday, days, poseDaysISO, closures, anchors, ordreAffiche);
+        next[bin.id] = await planWeek(bp, depot, workday, days, poseDaysISO, closures, anchors, ordreAffiche, farRegionKm);
       }
       setSchedules(next);
       setUsedPools(pools);
