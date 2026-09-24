@@ -489,7 +489,7 @@ async function ecrireEnBase(cle) {
       // Lecture seule jusqu'au rechargement : le serveur refuse ce compte (droit manquant ou
       // compte désactivé). On continue d'afficher les modifications des autres.
       Partage.interdit = true;
-      Partage.erreurs[cle] = 'Le serveur refuse l\'enregistrement (403) : ce compte n\'a pas le droit de modifier le planning (droit « horaires_poseurs » ou direction), ou il est désactivé. Tes modifications ne sont pas enregistrées.';
+      Partage.erreurs[cle] = 'Le serveur refuse l\'enregistrement (403) : ce compte n\'a pas le droit de modifier le planning. Dans l\'app de gestion, Gérer les comptes : cocher « Planifier les poses » pour ce compte, puis recharger cette page. Tes modifications ne sont pas enregistrées — ne vide pas le navigateur, elles seront envoyées au rechargement une fois le droit donné.';
     } else {
       Partage.essais[cle] = (Partage.essais[cle] || 0) + 1;
       Partage.erreurs[cle] = 'Modifications pas encore enregistrées (' + (e.status ? 'erreur ' + e.status : 'connexion au serveur impossible') + ').';
